@@ -1455,7 +1455,7 @@ if (lib.is_locked([database]) == false) {
                       country: peer.country,
                       country_code: peer.country_code
                     }, function() {
-                      console.log('Updated peer %s%s [%s/%s]', address, (port == null || port == '' ? '' : ':' + port.toString()), (i + 1).toString(), body.length.toString());
+                      console.log('Updated peer %s:%s [%s/%s]', address, port.toString(), (i + 1).toString(), body.length.toString());
 
                       // check if the script is stopping
                       if (stopSync) {
@@ -1489,7 +1489,7 @@ if (lib.is_locked([database]) == false) {
                           country: geo.country_name,
                           country_code: geo.country_code
                         }, function() {
-                          console.log('Added new peer %s%s [%s/%s]', address, (port == null || port == '' ? '' : ':' + port.toString()), (i + 1).toString(), body.length.toString());
+                          console.log('Added new peer %s:%s [%s/%s]', address, port.toString(), (i + 1).toString(), body.length.toString());
 
                           // check if the script is stopping
                           if (stopSync) {
@@ -1522,55 +1522,66 @@ if (lib.is_locked([database]) == false) {
             exit(2);
           }
         });
-      } else if (database == 'masternodes') {
-        lib.get_masternodelist(function(body) {
-          if (body != null) {
-            var isObject = false;
-            var objectKeys = null;
+} else if (database == 'masternodes') {
+  lib.get_masternodelist(function(body) {
+    if (body != null) {
+      var isObject = false;
+      var objectKeys = null;
+      // Check if the masternode data is an array or an object
+      if (body.length == null) {
+        // Process data as an object
+        objectKeys = Object.keys(body);
+        isObject = true;
+      }
 
-            // Check if the masternode data is an array or an object
-            if (body.length == null) {
-              // Process data as an object
-              objectKeys = Object.keys(body);
-              isObject = true;
+      lib.syncLoop((isObject ? objectKeys : body).length, function(loop) {
+        var i = loop.iteration();
+        // Parse masternode data
+        const value = isObject ? body[objectKeys[i]] : body[i];
+        const values = value.trim().split(/\s+/);
+        const proTxHash = objectKeys[i].split("-")[0]; // Extract the proTxHash from the object key
+        const masternode = {
+          proTxHash: proTxHash,
+          status: values[0].trim(),
+          payee: values[2].trim(),
+          lastpaidtime: parseInt(values[3]),
+          lastpaidblock: parseInt(values[4]),
+          address: values[7].trim()
+        };
+
+        db.save_masternode(masternode, function(success) {
+          if (success) {
+            // check if the script is stopping
+            if (stopSync) {
+              // stop the loop
+              loop.break(true);
             }
 
-            lib.syncLoop((isObject ? objectKeys : body).length, function(loop) {
-              var i = loop.iteration();
-
-              db.save_masternode((isObject ? body[objectKeys[i]] : body[i]), function(success) {
-                if (success) {
-                  // check if the script is stopping
-                  if (stopSync) {
-                    // stop the loop
-                    loop.break(true);
-                  }
-
-                  loop.next();
-                } else {
-                  console.log('Error: Cannot save masternode %s.', (isObject ? (body[objectKeys[i]].payee ? body[objectKeys[i]].payee : 'UNKNOWN') : (body[i].addr ? body[i].addr : 'UNKNOWN')));
-                  exit(1);
-                }
-              });
-            }, function() {
-              db.remove_old_masternodes(function(cb) {
-                db.update_last_updated_stats(settings.coin.name, { masternodes_last_updated: Math.floor(new Date() / 1000) }, function(cb) {
-                  // check if the script stopped prematurely
-                  if (stopSync) {
-                    console.log('Masternode sync was stopped prematurely');
-                    exit(1);
-                  } else {
-                    console.log('Masternode sync complete');
-                    exit(0);
-                  }
-                });
-              });
-            });
+            loop.next();
           } else {
-            console.log('No masternodes found');
-            exit(2);
+            console.log('Error: Cannot save masternode %s.', masternode.protxhash);
+            exit(1);
           }
         });
+      }, function() {
+        db.remove_old_masternodes(function(cb) {
+          db.update_last_updated_stats(settings.coin.name, { masternodes_last_updated: Math.floor(new Date() / 1000) }, function(cb) {
+            // check if the script stopped prematurely
+            if (stopSync) {
+              console.log('Masternode sync was stopped prematurely');
+              exit(1);
+            } else {
+              console.log('Masternode sync complete');
+              exit(0);
+            }
+          });
+        });
+      });
+    } else {
+      console.log('No masternodes found');
+      exit(2);
+    }
+  });
       } else {
         // check if market feature is enabled
         if (settings.markets_page.enabled == true) {
