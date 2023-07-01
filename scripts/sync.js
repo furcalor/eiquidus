@@ -1545,7 +1545,7 @@ if (lib.is_locked([database]) == false) {
           status: values[0].trim(),
           payee: values[2].trim(),
           lastpaidtime: parseInt(values[3]),
-          lastpaidblock: parseInt(values[4]),
+          lastpaidblock: parseInt(values[6]),
           address: values[7].trim()
         };
 
