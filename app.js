@@ -458,7 +458,7 @@ app.use('/ext/getsummary', function(req, res) {
               lib.get_masternodecount(function(masternodestotal) {
                 lib.get_difficulty(function(difficulty) {
                   difficultyHybrid = '';
-
+  console.log('mn_total:', masternodestotal);
                   if (difficulty && difficulty['proof-of-work']) {
                     if (settings.shared_pages.difficulty == 'Hybrid') {
                       difficultyHybrid = 'POS: ' + difficulty['proof-of-stake'];
