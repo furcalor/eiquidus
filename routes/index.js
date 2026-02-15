@@ -1,69 +1,126 @@
-var express = require('express'),
-    router = express.Router(),
-    settings = require('../lib/settings'),
-    locale = require('../lib/locale'),
-    db = require('../lib/database'),
-    lib = require('../lib/explorer'),
-    qr = require('qr-image');
+const express = require('express');
+const router = express.Router();
+const settings = require('../lib/settings');
+const db = require('../lib/database');
+const lib = require('../lib/explorer');
+const async = require('async');
 
-function route_get_block(res, blockhash) {
-  lib.get_block(blockhash, function (block) {
-    if (block && block != 'There was an error. Check your console.') {
-      if (blockhash == settings.block_page.genesis_block)
-        res.render(
-          'block', 
-          {
-            active: 'block',
-            block: block,
-            confirmations: settings.shared_pages.confirmations,
-            txs: 'GENESIS',
-            showSync: db.check_show_sync_message(),
-            customHash: get_file_timestamp('./public/css/custom.scss'),
-            styleHash: get_file_timestamp('./public/css/style.scss'),
-            themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-            page_title_prefix: settings.coin.name + ' Genesis Block'
-          }
-        );
-      else if (block.confirmations == -1) {
-        // this is an orphaned block, so get the data from the wallet directly
-        get_block_data_from_wallet(block, res, true);
-      } else {
-        db.get_txs(block, function(txs) {
-          if (txs.length > 0)
-            res.render(
-              'block',
-              {
-                active: 'block',
-                block: block,
-                confirmations: settings.shared_pages.confirmations,
-                txs: txs,
-                showSync: db.check_show_sync_message(),
-                customHash: get_file_timestamp('./public/css/custom.scss'),
-                styleHash: get_file_timestamp('./public/css/style.scss'),
-                themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-                page_title_prefix: settings.coin.name + ' Block ' + block.height
-              }
-            );
-          else {
-            // cannot find block in local database so get the data from the wallet directly
-            get_block_data_from_wallet(block, res, false);
-          }
-        });
-      }
-    } else {
-      if (!isNaN(blockhash)) {
-        var height = blockhash;
+function send_block_data(res, block, txs, title_text, orphan) {
+  let extracted_by_addresses = [];
 
-        lib.get_blockhash(height, function(hash) {
-          if (hash && hash != 'There was an error. Check your console.')
-            res.redirect('/block/' + hash);
-          else
-            route_get_index(res, 'Block not found: ' + blockhash);
-        });
-      } else
-        route_get_index(res, 'Block not found: ' + blockhash);
+  // check if the extracted by addresses should be found
+  if (settings.block_page.show_extracted_by == true && txs != null && txs.length > 0) {
+    // find the block reward tx
+    const block_reward_tx = txs.find(tx => tx.vin != null && (tx.vin.length === 0 || (tx.vin.length === 1 && tx.vin[0].addresses === 'coinbase' && tx.vin[0].amount != 0)));
+
+    // get a list of all the block reward addresses
+    extracted_by_addresses = (block_reward_tx ? block_reward_tx.vout.map(v => v.addresses) : []);
+
+    // add claim name data to the array
+    db.get_extracted_by_claim_names(extracted_by_addresses, function(updated_extracted_by_addresses) {
+      finalize_send_block_data(res, block, txs, title_text, orphan, updated_extracted_by_addresses);
+    });
+  } else
+    finalize_send_block_data(res, block, txs, title_text, orphan, extracted_by_addresses);
+}
+
+function finalize_send_block_data(res, block, txs, title_text, orphan, extracted_by_addresses) {
+  res.render(
+    'block',
+    {
+      active: 'block',
+      block: block,
+      orphan: orphan,
+      confirmations: settings.shared_pages.confirmations,
+      txs: txs,
+      extracted_by_addresses: extracted_by_addresses,
+      showSync: db.check_show_sync_message(),
+      customHash: get_custom_hash(),
+      styleHash: get_style_hash(),
+      themeHash: get_theme_hash(),
+      page_title_prefix: settings.coin.name + ' ' + title_text
     }
-  });
+  );
+}
+
+function send_tx_data(res, tx, blockcount, orphan) {
+  let extracted_by_addresses = [];
+
+  // check if the extracted by addresses should be found
+  if (
+    settings.transaction_page.show_extracted_by == true &&
+    tx != null &&
+    tx.vout != null &&
+    (
+      tx.vin == null ||
+      tx.vin.length === 0 ||
+      (
+        tx.vin.length === 1 &&
+        tx.vin[0].addresses === 'coinbase' &&
+        tx.vin[0].amount != 0
+      )
+    )
+  ) {
+    // get a list of all the block reward addresses
+    extracted_by_addresses = tx.vout.map(v => v.addresses);
+
+    // add claim name data to the array
+    db.get_extracted_by_claim_names(extracted_by_addresses, function(updated_extracted_by_addresses) {
+      finalize_send_tx_data(res, tx, blockcount, orphan, updated_extracted_by_addresses);
+    });
+  } else
+    finalize_send_tx_data(res, tx, blockcount, orphan, extracted_by_addresses);
+}
+
+function finalize_send_tx_data(res, tx, blockcount, orphan, extracted_by_addresses) {
+  res.render(
+    'tx',
+    {
+      active: 'tx',
+      tx: tx,
+      orphan: orphan,
+      confirmations: settings.shared_pages.confirmations,
+      blockcount: blockcount,
+      extracted_by_addresses: extracted_by_addresses,
+      showSync: db.check_show_sync_message(),
+      customHash: get_custom_hash(),
+      styleHash: get_style_hash(),
+      themeHash: get_theme_hash(),
+      page_title_prefix: settings.coin.name + ' ' + 'Transaction ' + tx.txid
+    }
+  );
+}
+
+function send_address_data(res, address, claim_name) {
+  res.render(
+    'address',
+    {
+      active: 'address',
+      address: address,
+      claim_name: claim_name,
+      showSync: db.check_show_sync_message(),
+      customHash: get_custom_hash(),
+      styleHash: get_style_hash(),
+      themeHash: get_theme_hash(),
+      page_title_prefix: settings.coin.name + ' ' + 'Address ' + (claim_name == null || claim_name == '' ? address.a_id : claim_name)
+    }
+  );
+}
+
+function send_claimaddress_data(res, hash, claim_name) {
+  res.render(
+    'claim_address',
+    {
+      active: 'claim-address',
+      hash: hash,
+      claim_name: claim_name,
+      showSync: db.check_show_sync_message(),
+      customHash: get_custom_hash(),
+      styleHash: get_style_hash(),
+      themeHash: get_theme_hash(),
+      page_title_prefix: settings.coin.name + ' Claim Wallet Address' + (hash == null || hash == '' ? '' : ' ' + hash)
+    }
+  );
 }
 
 function get_file_timestamp(file_name) {
@@ -71,325 +128,6 @@ function get_file_timestamp(file_name) {
     return parseInt(db.fs.statSync(file_name).mtimeMs / 1000);
   else
     return null;
-}
-
-/* GET functions */
-
-function route_get_tx(res, txid) {
-  if (txid == settings.transaction_page.genesis_tx)
-    route_get_block(res, settings.block_page.genesis_block);
-  else {
-    db.get_tx(txid, function(tx) {
-      if (tx) {
-        lib.get_blockcount(function(blockcount) {
-          if (settings.claim_address_page.enabled == true) {
-            db.populate_claim_address_names(tx, function(tx) {
-              res.render(
-                'tx',
-                {
-                  active: 'tx',
-                  tx: tx,
-                  confirmations: settings.shared_pages.confirmations,
-                  blockcount: (blockcount ? blockcount : 0),
-                  showSync: db.check_show_sync_message(),
-                  customHash: get_file_timestamp('./public/css/custom.scss'),
-                  styleHash: get_file_timestamp('./public/css/style.scss'),
-                  themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-                  page_title_prefix: settings.coin.name + ' Transaction ' + tx.txid
-                }
-              );
-            });
-          } else
-            res.render(
-              'tx',
-              {
-                active: 'tx',
-                tx: tx,
-                confirmations: settings.shared_pages.confirmations,
-                blockcount: (blockcount ? blockcount : 0),
-                showSync: db.check_show_sync_message(),
-                customHash: get_file_timestamp('./public/css/custom.scss'),
-                styleHash: get_file_timestamp('./public/css/style.scss'),
-                themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-                page_title_prefix: settings.coin.name + ' Transaction ' + tx.txid
-              }
-            );
-        });
-      } else {
-        lib.get_rawtransaction(txid, function(rtx) {
-          if (rtx && rtx.txid) {
-            lib.prepare_vin(rtx, function(vin, tx_type_vin) {
-              lib.prepare_vout(rtx.vout, rtx.txid, vin, ((!settings.blockchain_specific.zksnarks.enabled || typeof rtx.vjoinsplit === 'undefined' || rtx.vjoinsplit == null) ? [] : rtx.vjoinsplit), function(rvout, rvin, tx_type_vout) {
-                lib.calculate_total(rvout, function(total) {
-                  if (!rtx.confirmations > 0) {
-                    lib.get_block(rtx.blockhash, function(block) {
-                      if (block && block != 'There was an error. Check your console.') {
-                        var utx = {
-                          txid: rtx.txid,
-                          vin: rvin,
-                          vout: rvout,
-                          total: total.toFixed(8),
-                          timestamp: (rtx.time == null ? block.time : rtx.time),
-                          blockhash: (rtx.blockhash == null ? '-' : rtx.blockhash),
-                          blockindex: block.height
-                        };
-
-                        if (settings.claim_address_page.enabled == true) {
-                          db.populate_claim_address_names(utx, function(utx) {
-                            res.render(
-                              'tx',
-                              {
-                                orphan: true,
-                                active: 'tx',
-                                tx: utx,
-                                confirmations: settings.shared_pages.confirmations,
-                                blockcount: (block.height - 1),
-                                showSync: db.check_show_sync_message(),
-                                customHash: get_file_timestamp('./public/css/custom.scss'),
-                                styleHash: get_file_timestamp('./public/css/style.scss'),
-                                themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-                                page_title_prefix: settings.coin.name + ' Transaction ' + utx.txid
-                              }
-                            );
-                          });
-                        } else
-                          res.render(
-                            'tx',
-                            {
-                              orphan: true,
-                              active: 'tx',
-                              tx: utx,
-                              confirmations: settings.shared_pages.confirmations,
-                              blockcount: (block.height - 1),
-                              showSync: db.check_show_sync_message(),
-                              customHash: get_file_timestamp('./public/css/custom.scss'),
-                              styleHash: get_file_timestamp('./public/css/style.scss'),
-                              themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-                              page_title_prefix: settings.coin.name + ' Transaction ' + utx.txid
-                            }
-                          );
-                      } else {
-                        // cannot load tx
-                        route_get_index(res, null);
-                      }
-                    });
-                  } else {
-                    // check if blockheight exists
-                    if (!rtx.blockheight && rtx.blockhash) {
-                      // blockheight not found so look up the block
-                      lib.get_block(rtx.blockhash, function(block) {
-                        if (block && block != 'There was an error. Check your console.') {
-                          // create the tx object before rendering
-                          var utx = {
-                            txid: rtx.txid,
-                            vin: rvin,
-                            vout: rvout,
-                            total: total.toFixed(8),
-                            timestamp: rtx.time,
-                            blockhash: rtx.blockhash,
-                            blockindex: block.height
-                          };
-
-                          lib.get_blockcount(function(blockcount) {
-                            if (settings.claim_address_page.enabled == true) {
-                              db.populate_claim_address_names(utx, function(utx) {
-                                res.render(
-                                  'tx',
-                                  {
-                                    active: 'tx',
-                                    tx: utx,
-                                    confirmations: settings.shared_pages.confirmations,
-                                    blockcount: (blockcount ? blockcount : 0),
-                                    showSync: db.check_show_sync_message(),
-                                    customHash: get_file_timestamp('./public/css/custom.scss'),
-                                    styleHash: get_file_timestamp('./public/css/style.scss'),
-                                    themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-                                    page_title_prefix: settings.coin.name + ' Transaction ' + utx.txid
-                                  }
-                                );
-                              });
-                            } else
-                              res.render(
-                                'tx',
-                                {
-                                  active: 'tx',
-                                  tx: utx,
-                                  confirmations: settings.shared_pages.confirmations,
-                                  blockcount: (blockcount ? blockcount : 0),
-                                  showSync: db.check_show_sync_message(),
-                                  customHash: get_file_timestamp('./public/css/custom.scss'),
-                                  styleHash: get_file_timestamp('./public/css/style.scss'),
-                                  themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-                                  page_title_prefix: settings.coin.name + ' Transaction ' + utx.txid
-                                }
-                              );
-                          });
-                        } else {
-                          // cannot load tx
-                          route_get_index(res, null);
-                        }
-                      });
-                    } else {
-                      // create the tx object before rendering
-                      var utx = {
-                        txid: rtx.txid,
-                        vin: rvin,
-                        vout: rvout,
-                        total: total.toFixed(8),
-                        timestamp: rtx.time,
-                        blockhash: rtx.blockhash,
-                        blockindex: rtx.blockheight
-                      };
-
-                      lib.get_blockcount(function(blockcount) {
-                        if (settings.claim_address_page.enabled == true) {
-                          db.populate_claim_address_names(utx, function(utx) {
-                            res.render(
-                              'tx',
-                              {
-                                active: 'tx',
-                                tx: utx,
-                                confirmations: settings.shared_pages.confirmations,
-                                blockcount: (blockcount ? blockcount : 0),
-                                showSync: db.check_show_sync_message(),
-                                customHash: get_file_timestamp('./public/css/custom.scss'),
-                                styleHash: get_file_timestamp('./public/css/style.scss'),
-                                themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-                                page_title_prefix: settings.coin.name + ' Transaction ' + utx.txid
-                              }
-                            );
-                          });
-                        } else
-                          res.render(
-                            'tx',
-                            {
-                              active: 'tx',
-                              tx: utx,
-                              confirmations: settings.shared_pages.confirmations,
-                              blockcount: (blockcount ? blockcount : 0),
-                              showSync: db.check_show_sync_message(),
-                              customHash: get_file_timestamp('./public/css/custom.scss'),
-                              styleHash: get_file_timestamp('./public/css/style.scss'),
-                              themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-                              page_title_prefix: settings.coin.name + ' Transaction ' + utx.txid
-                            }
-                          );
-                      });
-                    }
-                  }
-                });
-              });
-            });
-          } else
-            route_get_index(res, null);
-        });
-      }
-    });
-  }
-}
-
-function route_get_index(res, error) {
-  // check if index page should show last updated date
-  if (settings.index_page.page_header.show_last_updated == true) {
-    // lookup last updated date
-    db.get_stats(settings.coin.name, function (stats) {
-      res.render(
-        'index',
-        {
-          active: 'home',
-          error: error,
-          last_updated: stats.blockchain_last_updated,
-          showSync: db.check_show_sync_message(),
-          customHash: get_file_timestamp('./public/css/custom.scss'),
-          styleHash: get_file_timestamp('./public/css/style.scss'),
-          themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-          page_title_prefix: settings.coin.name + ' Block Explorer'
-        }
-      );
-    });
-  } else {
-    // skip lookup of the last updated date and display the page now
-    res.render(
-      'index',
-      {
-        active: 'home',
-        error: error,
-        last_updated: null,
-        showSync: db.check_show_sync_message(),
-        customHash: get_file_timestamp('./public/css/custom.scss'),
-        styleHash: get_file_timestamp('./public/css/style.scss'),
-        themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-        page_title_prefix: settings.coin.name + ' Block Explorer'
-      }
-    );
-  }
-}
-
-function route_get_address(res, hash) {
-  // check if trying to load a special address
-  if (hash != null && hash.toLowerCase() != 'coinbase' && ((hash.toLowerCase() == 'hidden_address' && settings.address_page.enable_hidden_address_view == true) || (hash.toLowerCase() == 'unknown_address' && settings.address_page.enable_unknown_address_view == true) || (hash.toLowerCase() != 'hidden_address' && hash.toLowerCase() != 'unknown_address'))) {
-    // lookup address in local collection
-    db.get_address(hash, false, function(address) {
-      if (address)
-        res.render(
-          'address',
-          {
-            active: 'address',
-            address: address,
-            showSync: db.check_show_sync_message(),
-            customHash: get_file_timestamp('./public/css/custom.scss'),
-            styleHash: get_file_timestamp('./public/css/style.scss'),
-            themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-            page_title_prefix: settings.coin.name + ' Address ' + (address['name'] == null || address['name'] == '' ? address.a_id : address['name'])
-          }
-        );
-      else
-        route_get_index(res, hash + ' not found');
-    });
-  } else
-    route_get_index(res, hash + ' not found');
-}
-
-function route_get_claim_form(res, hash) {
-  // check if claiming addresses is enabled
-  if (settings.claim_address_page.enabled == true) {
-    // check if a hash was passed in
-    if (hash == null || hash == '') {
-      // no hash so just load the claim page without an address
-      res.render(
-        'claim_address',
-        {
-          active: 'claim-address',
-          hash: hash,
-          claim_name: '',
-          showSync: db.check_show_sync_message(),
-          customHash: get_file_timestamp('./public/css/custom.scss'),
-          styleHash: get_file_timestamp('./public/css/style.scss'),
-          themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-          page_title_prefix: settings.coin.name + ' Claim Wallet Address'
-        }
-      );
-    } else {
-      // lookup hash in the address collection
-      db.get_address(hash, false, function(address) {
-        // load the claim page regardless of whether the address exists or not
-        res.render(
-          'claim_address',
-          {
-            active: 'claim-address',
-            hash: hash,
-            claim_name: (address == null || address.name == null ? '' : address.name),
-            showSync: db.check_show_sync_message(),
-            customHash: get_file_timestamp('./public/css/custom.scss'),
-            styleHash: get_file_timestamp('./public/css/style.scss'),
-            themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-            page_title_prefix: settings.coin.name + ' Claim Wallet Address ' + hash
-          }
-        );
-      });
-    }
-  } else
-    route_get_address(res, hash);
 }
 
 function get_last_updated_date(show_last_updated, last_updated_field, cb) {
@@ -408,55 +146,277 @@ function get_last_updated_date(show_last_updated, last_updated_field, cb) {
 function get_block_data_from_wallet(block, res, orphan) {
   var ntxs = [];
 
-  lib.syncLoop(block.tx.length, function (loop) {
-    var i = loop.iteration();
-
-    lib.get_rawtransaction(block.tx[i], function(tx) {
-      if (tx && tx != 'There was an error. Check your console.') {
+  async.eachSeries(block.tx, function(block_tx, loop) {
+    lib.get_rawtransaction(block_tx, function(tx) {
+      if (tx && tx != `${settings.localization.ex_error}: ${settings.localization.check_console}`) {
         lib.prepare_vin(tx, function(vin, tx_type_vin) {
-          lib.prepare_vout(tx.vout, block.tx[i], vin, ((!settings.blockchain_specific.zksnarks.enabled || typeof tx.vjoinsplit === 'undefined' || tx.vjoinsplit == null) ? [] : tx.vjoinsplit), function(vout, nvin, tx_type_vout) {
-            lib.calculate_total(vout, function(total) {
-              ntxs.push({
-                txid: block.tx[i],
-                vout: vout,
-                total: total.toFixed(8)
-              });
+          lib.prepare_vout(tx.vout, block_tx, vin, ((!settings.blockchain_specific.zksnarks.enabled || typeof tx.vjoinsplit === 'undefined' || tx.vjoinsplit == null) ? [] : tx.vjoinsplit), function(vout, nvin, tx_type_vout) {
+            const total = lib.calculate_total(vout);
 
-              loop.next();
+            ntxs.push({
+              txid: block_tx,
+              vout: vout,
+              total: total.toFixed(8)
             });
+
+            if (settings.block_page.show_extracted_by == true) {
+              // add the vin object to the tx data
+              ntxs[ntxs.length - 1].vin = (vin == null || vin.length == 0 ? [] : nvin);
+            }
+
+            loop();
           });
         });
       } else
-        loop.next();
+        loop();
     });
   }, function() {
+    send_block_data(res, block, ntxs, 'Block ' + block.height, orphan);
+  });
+}
+
+function get_custom_hash() {
+  return get_file_timestamp('./public/css/custom.scss');
+}
+
+function get_style_hash() {
+  return get_file_timestamp('./public/css/style.scss');
+}
+
+function get_theme_hash() {
+  return get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css');
+}
+
+/* GET functions */
+
+function route_get_block(res, blockhash) {
+  lib.get_block(blockhash, function (block) {
+    if (block && block != `${settings.localization.ex_error}: ${settings.localization.check_console}`) {
+      if (blockhash == settings.block_page.genesis_block)
+        send_block_data(res, block, null, 'Genesis Block', null);
+      else if (block.confirmations == -1) {
+        // this is an orphaned block, so get the data from the wallet directly
+        get_block_data_from_wallet(block, res, true);
+      } else {
+        db.get_txs(block, function(txs) {
+          if (txs.length > 0)
+            send_block_data(res, block, txs, 'Block ' + block.height, null);
+          else {
+            // cannot find block in local database so get the data from the wallet directly
+            get_block_data_from_wallet(block, res, false);
+          }
+        });
+      }
+    } else {
+      if (!isNaN(blockhash)) {
+        var height = blockhash;
+
+        lib.get_blockhash(height, function(hash) {
+          if (hash && hash != `${settings.localization.ex_error}: ${settings.localization.check_console}`)
+            res.redirect('/block/' + hash);
+          else
+            route_get_txlist(res, 'Block not found: ' + blockhash);
+        });
+      } else
+        route_get_txlist(res, 'Block not found: ' + blockhash);
+    }
+  });
+}
+
+function route_get_tx(res, txid) {
+  if (txid == settings.transaction_page.genesis_tx)
+    route_get_block(res, settings.block_page.genesis_block);
+  else {
+    db.get_tx(txid, function(tx) {
+      if (tx) {
+        lib.get_blockcount(function(blockcount) {
+          if (settings.claim_address_page.enabled == true) {
+            db.populate_claim_address_names(tx, function(tx) {
+              send_tx_data(res, tx, (blockcount ? blockcount : 0), null);
+            });
+          } else
+            send_tx_data(res, tx, (blockcount ? blockcount : 0), null);
+        });
+      } else {
+        lib.get_rawtransaction(txid, function(rtx) {
+          if (rtx && rtx.txid) {
+            lib.prepare_vin(rtx, function(vin, tx_type_vin) {
+              lib.prepare_vout(rtx.vout, rtx.txid, vin, ((!settings.blockchain_specific.zksnarks.enabled || typeof rtx.vjoinsplit === 'undefined' || rtx.vjoinsplit == null) ? [] : rtx.vjoinsplit), function(rvout, rvin, tx_type_vout) {
+                const total = lib.calculate_total(rvout);
+
+                if (!rtx.confirmations > 0) {
+                  lib.get_block(rtx.blockhash, function(block) {
+                    if (block && block != `${settings.localization.ex_error}: ${settings.localization.check_console}`) {
+                      var utx = {
+                        txid: rtx.txid,
+                        vin: rvin,
+                        vout: rvout,
+                        total: total.toFixed(8),
+                        timestamp: (rtx.time == null ? block.time : rtx.time),
+                        blockhash: (rtx.blockhash == null ? '-' : rtx.blockhash),
+                        blockindex: block.height
+                      };
+
+                      if (settings.claim_address_page.enabled == true) {
+                        db.populate_claim_address_names(utx, function(utx) {
+                          send_tx_data(res, utx, (block.height - 1), true);
+                        });
+                      } else
+                        send_tx_data(res, utx, (block.height - 1), true);
+                    } else {
+                      // cannot load tx
+                      route_get_txlist(res, null);
+                    }
+                  });
+                } else {
+                  // check if blockheight exists
+                  if (!rtx.blockheight && rtx.blockhash) {
+                    // blockheight not found so look up the block
+                    lib.get_block(rtx.blockhash, function(block) {
+                      if (block && block != `${settings.localization.ex_error}: ${settings.localization.check_console}`) {
+                        // create the tx object before rendering
+                        var utx = {
+                          txid: rtx.txid,
+                          vin: rvin,
+                          vout: rvout,
+                          total: total.toFixed(8),
+                          timestamp: rtx.time,
+                          blockhash: rtx.blockhash,
+                          blockindex: block.height
+                        };
+
+                        lib.get_blockcount(function(blockcount) {
+                          if (settings.claim_address_page.enabled == true) {
+                            db.populate_claim_address_names(utx, function(utx) {
+                              send_tx_data(res, utx, (blockcount ? blockcount : 0), null);
+                            });
+                          } else
+                            send_tx_data(res, utx, (blockcount ? blockcount : 0), null);
+                        });
+                      } else {
+                        // cannot load tx
+                        route_get_txlist(res, null);
+                      }
+                    });
+                  } else {
+                    // create the tx object before rendering
+                    var utx = {
+                      txid: rtx.txid,
+                      vin: rvin,
+                      vout: rvout,
+                      total: total.toFixed(8),
+                      timestamp: rtx.time,
+                      blockhash: rtx.blockhash,
+                      blockindex: rtx.blockheight
+                    };
+
+                    lib.get_blockcount(function(blockcount) {
+                      if (settings.claim_address_page.enabled == true) {
+                        db.populate_claim_address_names(utx, function(utx) {
+                          send_tx_data(res, utx, (blockcount ? blockcount : 0), null);
+                        });
+                      } else
+                        send_tx_data(res, utx, (blockcount ? blockcount : 0), null);
+                    });
+                  }
+                }
+              });
+            });
+          } else
+            route_get_txlist(res, null);
+        });
+      }
+    });
+  }
+}
+
+function route_get_txlist(res, error) {
+  // lookup the last updated date if necessary
+  get_last_updated_date(settings.index_page.page_header.show_last_updated, 'blockchain_last_updated', function(last_updated_date) {
     res.render(
-      'block',
+      'index',
       {
-        orphan: orphan,
-        active: 'block',
-        block: block,
-        confirmations: settings.shared_pages.confirmations,
-        txs: ntxs,
+        active: 'home',
+        error: error,
+        last_updated: last_updated_date,
         showSync: db.check_show_sync_message(),
-        customHash: get_file_timestamp('./public/css/custom.scss'),
-        styleHash: get_file_timestamp('./public/css/style.scss'),
-        themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-        page_title_prefix: settings.coin.name + ' Block ' + block.height
+        customHash: get_custom_hash(),
+        styleHash: get_style_hash(),
+        themeHash: get_theme_hash(),
+        page_title_prefix: settings.coin.name + ' ' + 'Block Explorer'
       }
     );
   });
 }
 
-/* GET home page. */
+function route_get_address(res, hash) {
+  // check if trying to load a special address
+  if (hash != null && hash.toLowerCase() != 'coinbase' && ((hash.toLowerCase() == 'hidden_address' && settings.address_page.enable_hidden_address_view == true) || (hash.toLowerCase() == 'unknown_address' && settings.address_page.enable_unknown_address_view == true) || (hash.toLowerCase() != 'hidden_address' && hash.toLowerCase() != 'unknown_address'))) {
+    // lookup address in local collection
+    db.get_address(hash, false, function(address) {
+      if (address) {
+        if (settings.claim_address_page.enabled == true) {
+          // lookup claim_name for this address if exists
+          db.get_claim_name(hash, function(claim_name) {
+            send_address_data(res, address, claim_name);
+          });
+        } else
+          send_address_data(res, address, null);
+      } else
+        route_get_txlist(res, hash + ' not found');
+    });
+  } else
+    route_get_txlist(res, hash + ' not found');
+}
+
+function route_get_claim_form(res, hash) {
+  // check if claiming addresses is enabled
+  if (settings.claim_address_page.enabled == true) {
+    // check if a hash was passed in
+    if (hash == null || hash == '') {
+      // no hash so just load the claim page without an address
+      send_claimaddress_data(res, hash, '');
+    } else {
+      // lookup hash in the address collection
+      db.get_claim_name(hash, function(claim_name) {
+        // load the claim page regardless of whether the address exists or not
+        send_claimaddress_data(res, hash, (claim_name == null ? '' : claim_name));
+      });
+    }
+  } else
+    route_get_address(res, hash);
+}
 
 router.get('/', function(req, res) {
-  route_get_index(res, null);
+  route_get_txlist(res, null);
 });
 
 router.get('/info', function(req, res) {
+  let pluginApisExt = [];
+
   // ensure api page is enabled
   if (settings.api_page.enabled == true) {
+    // loop through all plugins defined in the settings
+    settings.plugins.allowed_plugins.forEach(function (plugin) {
+      // check if this plugin is enabled
+      if (plugin.enabled) {
+        // check if this plugin has a public_apis section
+        if (plugin.public_apis != null) {
+          // check if there is an ext section
+          if (plugin.public_apis.ext != null) {
+            // loop through all ext apis for this plugin
+            Object.keys(plugin.public_apis.ext).forEach(function(key, index, map) {
+              // check if this api is enabled
+              if (plugin.public_apis.ext[key].enabled == true) {
+                // add this api into the list of ext apis for plugins
+                pluginApisExt.push(plugin.public_apis.ext[key]);
+              }
+            });
+          }
+        }
+      }
+    });
+
     // load the api page
     res.render(
       'info',
@@ -464,15 +424,16 @@ router.get('/info', function(req, res) {
         active: 'info',
         address: req.headers.host,
         showSync: db.check_show_sync_message(),
-        customHash: get_file_timestamp('./public/css/custom.scss'),
-        styleHash: get_file_timestamp('./public/css/style.scss'),
-        themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-        page_title_prefix: settings.coin.name + ' Public API'
+        customHash: get_custom_hash(),
+        styleHash: get_style_hash(),
+        themeHash: get_theme_hash(),
+        page_title_prefix: settings.coin.name + ' Public API',
+        pluginApisExt: pluginApisExt
       }
     );
   } else {
-    // api page is not enabled so default to the index page
-    route_get_index(res, null);
+    // api page is not enabled so default to the tx list page
+    route_get_txlist(res, null);
   }
 });
 
@@ -511,65 +472,40 @@ router.get('/markets/:market/:coin_symbol/:pair_symbol', function(req, res) {
 
         var market_name = (isAlt ? (market_data.market_name_alt == null ? '' : market_data.market_name_alt) : (market_data.market_name == null ? '' : market_data.market_name));
         var market_logo = (isAlt ? (market_data.market_logo_alt == null ? '' : market_data.market_logo_alt) : (market_data.market_logo == null ? '' : market_data.market_logo));
+        var marketdata = {
+          market_name: market_name,
+          market_logo: market_logo,
+          coin: coin_symbol,
+          exchange: pair_symbol,
+          data: data,
+          url: url
+        };
 
-        // check if markets page should show last updated date
-        if (settings.markets_page.page_header.show_last_updated == true) {
-          // lookup last updated date
-          db.get_stats(settings.coin.name, function (stats) {
-            res.render(
-              './market',
-              {
-                active: 'markets',
-                marketdata: {
-                  market_name: market_name,
-                  market_logo: market_logo,
-                  coin: coin_symbol,
-                  exchange: pair_symbol,
-                  data: data,
-                  url: url
-                },
-                market: market_id,
-                last_updated: stats.markets_last_updated,
-                showSync: db.check_show_sync_message(),
-                customHash: get_file_timestamp('./public/css/custom.scss'),
-                styleHash: get_file_timestamp('./public/css/style.scss'),
-                themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-                page_title_prefix: locale.mkt_title.replace('{1}', market_name + ' (' + coin_symbol + '/' + pair_symbol + ')')
-              }
-            );
-          });
-        } else {
-          // skip looking up the last updated date and display the page now
+        // lookup the last updated date if necessary
+        get_last_updated_date(settings.markets_page.page_header.show_last_updated, 'markets_last_updated', function(last_updated_date) {
           res.render(
             './market',
             {
               active: 'markets',
-              marketdata: {
-                market_name: market_name,
-                market_logo: market_logo,
-                coin: coin_symbol,
-                exchange: pair_symbol,
-                data: data,
-                url: url
-              },
+              marketdata: marketdata,
               market: market_id,
-              last_updated: null,
+              last_updated: last_updated_date,
               showSync: db.check_show_sync_message(),
-              customHash: get_file_timestamp('./public/css/custom.scss'),
-              styleHash: get_file_timestamp('./public/css/style.scss'),
-              themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-              page_title_prefix: locale.mkt_title.replace('{1}', market_name + ' (' + coin_symbol + '/' + pair_symbol + ')')
+              customHash: get_custom_hash(),
+              styleHash: get_style_hash(),
+              themeHash: get_theme_hash(),
+              page_title_prefix: settings.localization.mkt_title.replace('{1}', marketdata.market_name + ' (' + marketdata.coin + '/' + marketdata.exchange + ')')
             }
           );
-        }
+        });
       });
     } else {
-      // selected market does not exist or is not enabled so default to the index page
-      route_get_index(res, null);
+      // selected market does not exist or is not enabled so default to the tx list page
+      route_get_txlist(res, null);
     }
   } else {
-    // markets page is not enabled so default to the index page
-    route_get_index(res, null);
+    // markets page is not enabled so default to the tx list page
+    route_get_txlist(res, null);
   }
 });
 
@@ -595,104 +531,77 @@ router.get('/richlist', function(req, res) {
                 diste: distribution.t_101plus,
                 last_updated: (settings.richlist_page.page_header.show_last_updated == true ? stats.richlist_last_updated : null),
                 showSync: db.check_show_sync_message(),
-                customHash: get_file_timestamp('./public/css/custom.scss'),
-                styleHash: get_file_timestamp('./public/css/style.scss'),
-                themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
+                customHash: get_custom_hash(),
+                styleHash: get_style_hash(),
+                themeHash: get_theme_hash(),
                 page_title_prefix: 'Top ' + settings.coin.name + ' Coin Holders'
               }
             );
           });
         } else {
-          // richlist data not found so default to the index page
-          route_get_index(res, null);
+          // richlist data not found so default to the tx list page
+          route_get_txlist(res, null);
         }
       });
     });
   } else {
-    // richlist page is not enabled so default to the index page
-    route_get_index(res, null);
+    // richlist page is not enabled so default to the tx list page
+    route_get_txlist(res, null);
   }
 });
 
 router.get('/movement', function(req, res) {
   // ensure movement page is enabled
   if (settings.movement_page.enabled == true) {
-    // check if movement page should show last updated date
-    if (settings.movement_page.page_header.show_last_updated == true) {
-      // lookup last updated date
-      db.get_stats(settings.coin.name, function (stats) {
-        res.render(
-          'movement',
-          {
-            active: 'movement',
-            last_updated: stats.blockchain_last_updated,
-            showSync: db.check_show_sync_message(),
-            customHash: get_file_timestamp('./public/css/custom.scss'),
-            styleHash: get_file_timestamp('./public/css/style.scss'),
-            themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-            page_title_prefix: settings.coin.name + ' Coin Movements'
-          }
-        );
-      });
-    } else {
-      // skip lookup of the last updated date and display the page now
+    // lookup the last updated date if necessary
+    get_last_updated_date(settings.movement_page.page_header.show_last_updated, 'blockchain_last_updated', function(last_updated_date) {
       res.render(
         'movement',
         {
           active: 'movement',
-          last_updated: null,
+          last_updated: last_updated_date,
           showSync: db.check_show_sync_message(),
-          customHash: get_file_timestamp('./public/css/custom.scss'),
-          styleHash: get_file_timestamp('./public/css/style.scss'),
-          themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-          page_title_prefix: settings.coin.name + ' Coin Movements'
+          customHash: get_custom_hash(),
+          styleHash: get_style_hash(),
+          themeHash: get_theme_hash(),
+          page_title_prefix: settings.coin.name + ' ' + 'Coin Movements'
         }
       );
-    }
+    });
   } else {
-    // movement page is not enabled so default to the index page
-    route_get_index(res, null);
+    // movement page is not enabled so default to the tx list page
+    route_get_txlist(res, null);
   }
 });
 
 router.get('/network', function(req, res) {
   // ensure network page is enabled
-  if (settings.network_page.enabled == true) {
-    // check if network page should show last updated date
-    if (settings.network_page.page_header.show_last_updated == true) {
-      // lookup last updated date
-      db.get_stats(settings.coin.name, function (stats) {
-        res.render(
-          'network',
-          {
-            active: 'network',
-            last_updated: stats.network_last_updated,
-            showSync: db.check_show_sync_message(),
-            customHash: get_file_timestamp('./public/css/custom.scss'),
-            styleHash: get_file_timestamp('./public/css/style.scss'),
-            themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-            page_title_prefix: settings.coin.name + ' Network Peers'
-          }
-        );
-      });
-    } else {
-      // skip lookup of the last updated date and display the page now
+  if (
+    settings.network_page.enabled == true &&
+    (
+      settings.network_page.connections_table.enabled == true ||
+      settings.network_page.addnodes_table.enabled == true ||
+      settings.network_page.onetry_table.enabled == true
+    )
+  ) {
+    // lookup the last updated date if necessary
+    get_last_updated_date(settings.network_page.page_header.show_last_updated, 'network_last_updated', function(last_updated_date) {
       res.render(
         'network',
         {
           active: 'network',
-          last_updated: null,
+          last_updated: last_updated_date,
           showSync: db.check_show_sync_message(),
-          customHash: get_file_timestamp('./public/css/custom.scss'),
-          styleHash: get_file_timestamp('./public/css/style.scss'),
-          themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-          page_title_prefix: settings.coin.name + ' Network Peers'
+          customHash: get_custom_hash(),
+          styleHash: get_style_hash(),
+          themeHash: get_theme_hash(),
+          page_title_prefix: settings.coin.name + ' ' + 'Network Peers'
         }
       );
-    }
+    });
   } else {
-    // network page is not enabled so default to the index page
-    route_get_index(res, null);
+    // network page is not enabled so default to the tx list page
+    route_get_txlist(res, null);
   }
 });
 
@@ -700,41 +609,24 @@ router.get('/network', function(req, res) {
 router.get('/masternodes', function(req, res) {
   // ensure masternode page is enabled
   if (settings.masternodes_page.enabled == true) {
-    // check if masternodes page should show last updated date
-    if (settings.masternodes_page.page_header.show_last_updated == true) {
-      // lookup last updated date
-      db.get_stats(settings.coin.name, function (stats) {
-        res.render(
-          'masternodes',
-          {
-            active: 'masternodes',
-            last_updated: stats.masternodes_last_updated,
-            showSync: db.check_show_sync_message(),
-            customHash: get_file_timestamp('./public/css/custom.scss'),
-            styleHash: get_file_timestamp('./public/css/style.scss'),
-            themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-            page_title_prefix: settings.coin.name + ' Masternodes'
-          }
-        );
-      });
-    } else {
-      // skip lookup of the last updated date and display the page now
+    // lookup the last updated date if necessary
+    get_last_updated_date(settings.masternodes_page.page_header.show_last_updated, 'masternodes_last_updated', function(last_updated_date) {
       res.render(
         'masternodes',
         {
           active: 'masternodes',
-          last_updated: null,
+          last_updated: last_updated_date,
           showSync: db.check_show_sync_message(),
-          customHash: get_file_timestamp('./public/css/custom.scss'),
-          styleHash: get_file_timestamp('./public/css/style.scss'),
-          themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-          page_title_prefix: settings.coin.name + ' Masternodes'
+          customHash: get_custom_hash(),
+          styleHash: get_style_hash(),
+          themeHash: get_theme_hash(),
+          page_title_prefix: settings.coin.name + ' ' + 'Masternodes'
         }
       );
-    }
+    });
   } else {
-    // masternode page is not enabled so default to the index page
-    route_get_index(res, null);
+    // masternode page is not enabled so default to the tx list page
+    route_get_txlist(res, null);
   }
 });
 
@@ -766,17 +658,17 @@ router.get('/reward', function(req, res) {
             votes: votes,
             last_updated: (settings.blockchain_specific.heavycoin.reward_page.page_header.show_last_updated == true ? stats.reward_last_updated : null),
             showSync: db.check_show_sync_message(),
-            customHash: get_file_timestamp('./public/css/custom.scss'),
-            styleHash: get_file_timestamp('./public/css/style.scss'),
-            themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
+            customHash: get_custom_hash(),
+            styleHash: get_style_hash(),
+            themeHash: get_theme_hash(),
             page_title_prefix: settings.coin.name + ' Reward/Voting Details'
           }
         );
       });
     });
   } else {
-    // reward page is not enabled so default to the index page
-    route_get_index(res, null);
+    // reward page is not enabled so default to the tx list page
+    route_get_txlist(res, null);
   }
 });
 
@@ -811,16 +703,16 @@ router.get('/orphans', function(req, res) {
           active: 'orphans',
           last_updated: last_updated_date,
           showSync: db.check_show_sync_message(),
-          customHash: get_file_timestamp('./public/css/custom.scss'),
-          styleHash: get_file_timestamp('./public/css/style.scss'),
-          themeHash: get_file_timestamp('./public/css/themes/' + settings.shared_pages.theme.toLowerCase() + '/bootstrap.min.css'),
-          page_title_prefix: locale.orphan_title.replace('{1}', settings.coin.name)
+          customHash: get_custom_hash(),
+          styleHash: get_style_hash(),
+          themeHash: get_theme_hash(),
+          page_title_prefix: settings.localization.orphan_title.replace('{1}', settings.coin.name)
         }
       );
     });
   } else {
-    // orphans page is not enabled so default to the index page
-    route_get_index(res, null);
+    // orphans page is not enabled so default to the tx list page
+    route_get_txlist(res, null);
   }
 });
 
@@ -837,7 +729,7 @@ router.post('/search', function(req, res) {
             res.redirect('/tx/' + tx.txid);
           else {
             lib.get_block(query, function(block) {
-              if (block && block != 'There was an error. Check your console.')
+              if (block && block != `${settings.localization.ex_error}: ${settings.localization.check_console}`)
                 res.redirect('/block/' + query);
               else {
                 // check wallet for transaction
@@ -845,8 +737,8 @@ router.post('/search', function(req, res) {
                   if (tx && tx.txid)
                     res.redirect('/tx/' + tx.txid);
                   else {
-                    // search found nothing so display the index page with an error msg
-                    route_get_index(res, locale.ex_search_error + query );
+                    // search found nothing so display the tx list page with an error msg
+                    route_get_txlist(res, settings.localization.ex_search_error + query );
                   }
                 });
               }
@@ -860,22 +752,24 @@ router.post('/search', function(req, res) {
           res.redirect('/address/' + address.a_id);
         else {
           lib.get_blockhash(query, function(hash) {
-            if (hash && hash != 'There was an error. Check your console.')
+            if (hash && hash != `${settings.localization.ex_error}: ${settings.localization.check_console}`)
               res.redirect('/block/' + hash);
             else
-              route_get_index(res, locale.ex_search_error + query);
+              route_get_txlist(res, settings.localization.ex_search_error + query);
           });
         }
       });
     }
   } else {
-    // Search is disabled so load the index page with an error msg
-    route_get_index(res, 'Search is disabled');
+    // Search is disabled so load the tx list page with an error msg
+    route_get_txlist(res, 'Search is disabled');
   }
 });
 
 router.get('/qr/:string', function(req, res) {
   if (req.params.string) {
+    const qr = require('qr-image');
+
     var address = qr.image(req.params.string, {
       type: 'png',
       size: 4,

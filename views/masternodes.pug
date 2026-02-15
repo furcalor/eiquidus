@@ -1,7 +1,6 @@
 extends layout
 
 block content
-  include ./includes/common.pug
   script.
     var setting_txPerPage = parseInt("#{settings.masternodes_page.masternode_table.items_per_page}");
     var lengthMenuOpts = !{JSON.stringify(settings.masternodes_page.masternode_table.page_length_options)};
@@ -50,11 +49,42 @@ block content
           url: '/ext/getmasternodelist',
           dataSrc: function(json) {
             for (i = 0; i < json.length; i++) {
-              var addr = json[i]['addr'];
-              json[i]['address'] = "<a href='/address/" + json[i]['address'] + "'>" + json[i]['address'] + "</a>";
-              json[i]['lastseen'] = '<span' + (#{settings.shared_pages.date_time.enable_alt_timezone_tooltips} == true ? ' data-bs-toggle="tooltip" data-bs-placement="auto" title="' + format_unixtime(json[i]['lastseen'], true) + '"' : '') + '>' + format_unixtime(json[i]['lastseen']) + '</span>';
+              if (json[i]['rank'] != null && json[i]['rank'] > 0)
+                enabled_columns.rank = true;
 
-              if (typeof json[i]['lastpaid'] != 'undefined' && json[i]['lastpaid'] != '' && json[i]['lastpaid'] != '0')
+              if (json[i]['network'] != null && json[i]['network'] != '')
+                enabled_columns.network = true;
+
+              if (json[i]['ip_address'] != null && json[i]['ip_address'] != '')
+                enabled_columns.ip_address = true;
+
+              if (json[i]['version'] != null && json[i]['version'] > 0)
+                enabled_columns.version = true;
+
+              if (json[i]['lastseen'] != null && json[i]['lastseen'] > 0)
+                enabled_columns.lastseen = true;
+
+              if (json[i]['lastpaid'] != null && json[i]['lastpaid'] > 0)
+                enabled_columns.lastpaid = true;
+
+              if (json[i]['last_paid_block'] != null && json[i]['last_paid_block'] > 0)
+                enabled_columns.last_paid_block = true;
+
+              if (json[i]['activetime'] != null && json[i]['activetime'] > 0)
+                enabled_columns.activetime = true;
+
+              if (json[i]['status'] != null && json[i]['status'] != '')
+                enabled_columns.status = true;
+
+              if (json[i]['addr'] != null && json[i]['addr'] != '')
+                enabled_columns.addr = true;
+
+              var addr = json[i]['addr'];
+
+              if (json[i]['lastseen'] != null)
+                json[i]['lastseen'] = '<span' + (#{settings.shared_pages.date_time.enable_alt_timezone_tooltips} == true ? ' data-bs-toggle="tooltip" data-bs-placement="auto" title="' + format_unixtime(json[i]['lastseen'], true) + '"' : '') + '>' + format_unixtime(json[i]['lastseen']) + '</span>';
+
+              if (json[i]['lastpaid'] != null && json[i]['lastpaid'] != '' && json[i]['lastpaid'] != '0')
                 json[i]['lastpaid'] = '<span' + (#{settings.shared_pages.date_time.enable_alt_timezone_tooltips} == true ? ' data-bs-toggle="tooltip" data-bs-placement="auto" title="' + format_unixtime(json[i]['lastpaid'], true) + '"' : '') + '>' + format_unixtime(json[i]['lastpaid']) + '</span>';
               else
                 json[i]['lastpaid'] = '<em>N/A</em>';
@@ -62,18 +92,17 @@ block content
                 json[i]['activetime'] = secondsToHms(json[i]['activetime']);
               else
                 json[i]['activetime'] = '<em>N/A</em>';
+
               json[i]['addr'] = "<a href='/address/" + json[i]['addr'] + "'>" + json[i]['addr'] + ('#{settings.claim_address_page.enabled}' == 'true' && json[i]['claim_name'] != null && json[i]['claim_name'] != '' ? ' <span class="small fw-normal">(' + json[i]['claim_name'] + ')</span>' : '') + "</a>";
 
               if (labels[addr] != null && labels[addr].enabled == true) {
                 if (labels[addr].type)
-                  json[i]['addr'] = '<div><label class="badge bg-' + labels[addr].type + '" style="margin-bottom:10px;">' + labels[addr].label + (labels[addr].url ? '<a href="' + labels[addr].url + '" target="_blank", alt="Visit site", title="Visit site" data-bs-toggle="tooltip" data-bs-placement="top"><span class="fa fa-question-circle" style="margin-left:5px"></span></a>' : '') + '</label></div>' + json[i]['addr'];
+                  json[i]['addr'] = '<div><label class="badge bg-' + labels[addr].type + '" style="margin-bottom:10px;">' + labels[addr].label + (labels[addr].url ? '<a href="' + labels[addr].url + '" target="_blank", alt="Visit site", title="Visit site" data-bs-toggle="tooltip" data-bs-placement="top"><span class="fa-solid fa-circle-question" style="margin-left:5px"></span></a>' : '') + '</label></div>' + json[i]['addr'];
                 else
-                  json[i]['addr'] = '<div><label class="badge bg-default" style="margin-bottom:10px;">' + labels[addr].label + (labels[addr].url ? '<a href="' + labels[addr].url + '" target="_blank", alt="Visit site", title="Visit site" data-bs-toggle="tooltip" data-bs-placement="top"><span class="fa fa-question-circle" style="margin-left:5px"></span></a>' : '') + '</label></div>' + json[i]['addr'];
+                  json[i]['addr'] = '<div><label class="badge bg-default" style="margin-bottom:10px;">' + labels[addr].label + (labels[addr].url ? '<a href="' + labels[addr].url + '" target="_blank", alt="Visit site", title="Visit site" data-bs-toggle="tooltip" data-bs-placement="top"><span class="fa-solid fa-circle-question" style="margin-left:5px"></span></a>' : '') + '</label></div>' + json[i]['addr'];
               }
             }
- 
-            useNewDashFormat = json.length > 0 && json[0].ip_address != null && json[0].ip_address != '';
- 
+
             return json;
           }
         },
@@ -88,9 +117,7 @@ block content
         ],
         rowCallback: function(row, data, index) {
           $("td.addressCol", row).addClass("breakWord");
-
-          if (useNewDashFormat)
-            $("td.ipAddressCol", row).addClass("breakWord");
+          $("td.ipAddressCol", row).addClass("breakWord");
 
           switch (data['status'].toUpperCase()) {
             case 'ENABLED':
@@ -100,6 +127,10 @@ block content
               $("td.statusCol", row).addClass('table-danger');
               break;
             case 'EXPIRED':
+            case 'WATCHDOG_EXPIRED':
+            case 'NEW_START_REQUIRED':
+            case 'UPDATE_REQUIRED':
+            case 'POSE_BANNED':
               $("td.statusCol", row).addClass('table-warning');
               break;
             default:
@@ -124,7 +155,7 @@ block content
       });
 
       if ('#{settings.masternodes_page.page_header.show_last_updated}' == 'true') {
-        var lastUpdatedDate = #{(last_updated == null || last_updated == '0' ? 0 : last_updated)};
+        const lastUpdatedDate = #{(last_updated == null || last_updated == '0' ? 0 : last_updated)};
 
         if (lastUpdatedDate != 0) {
           $('span#lastUpdatedDate').html(' ' + format_unixtime(lastUpdatedDate));
@@ -147,23 +178,23 @@ block content
             img#header-img(src=(settings.shared_pages.page_header.page_title_image == null || settings.shared_pages.page_header.page_title_image.image_path == null || settings.shared_pages.page_header.page_title_image.image_path == '' ? '/img/page-title-img.png' : settings.shared_pages.page_header.page_title_image.image_path))
         #page-title-container
           if settings.masternodes_page.page_header.show_title == true
-            h3#page-title #{settings.locale.mn_title.replace('{1}', settings.coin.name)}
+            h3#page-title #{settings.localization.mn_title.replace('{1}', settings.coin.name)}
           if settings.masternodes_page.page_header.show_last_updated == true
             if settings.masternodes_page.page_header.show_title != true && settings.masternodes_page.page_header.show_description != true
               #page-title-container
                 .sub-page-header
-                  span.fw-bold=settings.locale.last_updated + ':'
+                  span.fw-bold=settings.localization.last_updated + ':'
                   span.text-muted#lastUpdatedDate
             else
               .sub-page-header(style='margin-bottom:' + (settings.masternodes_page.page_header.show_description == true ? '5' : '0') + 'px')
-                span.fw-bold=settings.locale.last_updated + ':'
+                span.fw-bold=settings.localization.last_updated + ':'
                 span.text-muted#lastUpdatedDate
           if settings.masternodes_page.page_header.show_description == true
             if settings.masternodes_page.page_header.show_title != true && settings.masternodes_page.page_header.show_last_updated != true
               #page-title-container
-                .sub-page-header.text-muted=settings.locale.mn_description.replace('{1}', settings.coin.name)
+                .sub-page-header.text-muted=settings.localization.mn_description.replace('{1}', settings.coin.name)
             else
-              .sub-page-header.text-muted=settings.locale.mn_description.replace('{1}', settings.coin.name)
+              .sub-page-header.text-muted=settings.localization.mn_description.replace('{1}', settings.coin.name)
       .cardSpacer.clearfix
     .card.card-default.border-0.cardSpacer
       .card-header
@@ -175,6 +206,8 @@ block content
         thead
           tr(class=theadClasses)
             th.text-center IP address
+            th.text-center Pay rank
+            th.text-center Network
             th.text-center Wallet address
             th.text-center Last seen
             th.text-center Last paid
