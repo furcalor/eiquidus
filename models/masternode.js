@@ -18,3 +18,4 @@ var MasternodeSchema = new Schema({
 }, {id: false});
 
 module.exports = mongoose.model('Masternode', MasternodeSchema);
+

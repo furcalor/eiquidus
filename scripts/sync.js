@@ -1426,13 +1426,25 @@ if (lib.is_locked([database]) == false) {
                     ipv6: (address && address.length > 15)
                   });
 
-                  // check if any peers should be saved
-                  if (newPeers != null && newPeers.length > 0) {
-                    // add peers to peer array
-                    peerList = peerList.concat(newPeers);
-                    console.log('Update existing peer %s%s [%s/%s]', address, (port == null || port == '' ? '' : ':' + port.toString()), (i + 1).toString(), body.length.toString());
-                  } else
-                    console.log('Skip peer %s%s [%s/%s]', address, (port == null || port == '' ? '' : ':' + port.toString()), (i + 1).toString(), body.length.toString());
+                  // peer already exists and should be refreshed
+                  // drop peer
+                  db.drop_peer(address, port, function() {
+                    // re-add the peer to refresh the data and extend the expiry date
+                    db.create_peer({
+                      address: address,
+                      port: port,
+                      protocol: peer.protocol,
+                      version: peer.version,
+                      country: peer.country,
+                      country_code: peer.country_code
+                    }, function() {
+                      console.log('Updated peer %s:%s [%s/%s]', address, port.toString(), (i + 1).toString(), body.length.toString());
+
+                      // check if the script is stopping
+                      if (stopSync) {
+                        // stop the loop
+                        loop.break(true);
+                      }
 
                   // check if the script is stopping
                   if (stopSync) {
@@ -1443,43 +1455,29 @@ if (lib.is_locked([database]) == false) {
                     loop();
                   }
                 } else {
-                  // this peer does not exist in the local database from last peer sync
-                  // process the peer object
-                  const newPeers = process_peer_object(peerList, {
-                    address: address,
-                    port: port,
-                    protocol: body[i].version,
-                    version: body[i].subver.replace('/', '').replace('/', ''),
-                    ipv6: (address && address.length > 15)
-                  });
-                  
-                  // check if any peers should be saved
-                  if (newPeers != null && newPeers.length > 0) {
-                    // set up the rate limit library to limit how fast external api calls are made
-                    const rateLimitLib = require('../lib/ratelimit');
-                    const rateLimit = new rateLimitLib.RateLimit(1, settings.sync.rate_limit.peer_sync_rate_limit, false);
+                  const rateLimitLib = require('../lib/ratelimit');
+                  const rateLimit = new rateLimitLib.RateLimit(1, 2000, false);
 
-                    // wait before running the external geo location api call below
-                    rateLimit.schedule(function() {
-                      // call an external geo location api to determine which country the current peer is from
-                      lib.get_geo_location(address, function(error, geo) {
-                        // check if an error was returned
-                        if (error) {
-                          console.log(error);
-                          exit(1);
-                        } else if (geo == null || typeof geo != 'object') {
-                          console.log(`Error: geolocation api returned unexpected results for ip address ${address}`);
-                          exit(1);
-                        } else {
-                          // add the geolocation data to the new peer record(s)
-                          newPeers.forEach(function (newPeer) {
-                            newPeer.country = geo.country_name;
-                            newPeer.country_code = geo.country_code;
-                          });
-                          
-                          // add peers to peer array
-                          peerList = peerList.concat(newPeers);
-                          console.log('Add new peer %s%s [%s/%s]', address, (port == null || port == '' ? '' : ':' + port.toString()), (i + 1).toString(), body.length.toString());
+                  rateLimit.schedule(function() {
+                    lib.get_geo_location(address, function(error, geo) {
+                      // check if an error was returned
+                      if (error) {
+                        console.log(error);
+                        exit(1);
+                      } else if (geo == null || typeof geo != 'object') {
+                        console.log('Error: geolocation api did not return a valid object');
+                        exit(1);
+                      } else {
+                        // add peer to collection
+                        db.create_peer({
+                          address: address,
+                          port: port,
+                          protocol: body[i].version,
+                          version: body[i].subver.replace('/', '').replace('/', ''),
+                          country: geo.country_name,
+                          country_code: geo.country_code
+                        }, function() {
+                          console.log('Added new peer %s:%s [%s/%s]', address, port.toString(), (i + 1).toString(), body.length.toString());
 
                           // check if the script is stopping
                           if (stopSync) {
@@ -1530,54 +1528,66 @@ if (lib.is_locked([database]) == false) {
             exit(2);
           }
         });
-      } else if (database == 'masternodes') {
-        lib.get_masternodelist(function(body) {
-          if (body != null) {
-            let isObject = false;
-            let objectKeys = null;
+} else if (database == 'masternodes') {
+  lib.get_masternodelist(function(body) {
+    if (body != null) {
+      var isObject = false;
+      var objectKeys = null;
+      // Check if the masternode data is an array or an object
+      if (body.length == null) {
+        // Process data as an object
+        objectKeys = Object.keys(body);
+        isObject = true;
+      }
 
-            // check if the masternode data is an array or an object
-            if (body.length == null) {
-              // process data as an object
-              objectKeys = Object.keys(body);
-              isObject = true;
+      lib.syncLoop((isObject ? objectKeys : body).length, function(loop) {
+        var i = loop.iteration();
+        // Parse masternode data
+        const value = isObject ? body[objectKeys[i]] : body[i];
+        const values = value.trim().split(/\s+/);
+        const proTxHash = objectKeys[i].split("-")[0]; // Extract the proTxHash from the object key
+        const masternode = {
+          proTxHash: proTxHash,
+          status: values[0].trim(),
+          payee: values[2].trim(),
+          lastpaidtime: parseInt(values[3]),
+          lastpaidblock: parseInt(values[6]),
+          address: values[7].trim()
+        };
+
+        db.save_masternode(masternode, function(success) {
+          if (success) {
+            // check if the script is stopping
+            if (stopSync) {
+              // stop the loop
+              loop.break(true);
             }
 
-            async.timesSeries((isObject ? objectKeys : body).length, function(i, loop) {
-              db.save_masternode((isObject ? body[objectKeys[i]] : body[i]), (isObject ? objectKeys[i] : null), function(success) {
-                if (success) {
-                  // check if the script is stopping
-                  if (stopSync) {
-                    // stop the loop
-                    loop({});
-                  } else {
-                    // move to next masternode
-                    loop();
-                  }
-                } else {
-                  console.log('Error: Cannot save masternode %s.', (isObject ? (body[objectKeys[i]].payee ? body[objectKeys[i]].payee : 'UNKNOWN') : (body[i].addr ? body[i].addr : 'UNKNOWN')));
-                  exit(1);
-                }
-              });
-            }, function() {
-              db.remove_old_masternodes(function() {
-                db.update_last_updated_stats(settings.coin.name, { masternodes_last_updated: Math.floor(new Date() / 1000) }, function(update_success) {
-                  // check if the script stopped prematurely
-                  if (stopSync) {
-                    console.log('Masternode sync was stopped prematurely');
-                    exit(1);
-                  } else {
-                    console.log('Masternode sync complete');
-                    exit(0);
-                  }
-                });
-              });
-            });
+            loop.next();
           } else {
-            console.log('No masternodes found');
-            exit(2);
+            console.log('Error: Cannot save masternode %s.', masternode.protxhash);
+            exit(1);
           }
         });
+      }, function() {
+        db.remove_old_masternodes(function(cb) {
+          db.update_last_updated_stats(settings.coin.name, { masternodes_last_updated: Math.floor(new Date() / 1000) }, function(cb) {
+            // check if the script stopped prematurely
+            if (stopSync) {
+              console.log('Masternode sync was stopped prematurely');
+              exit(1);
+            } else {
+              console.log('Masternode sync complete');
+              exit(0);
+            }
+          });
+        });
+      });
+    } else {
+      console.log('No masternodes found');
+      exit(2);
+    }
+  });
       } else {
         // start market sync
         // check if market feature is enabled or the market_price option is set to COINGECKO

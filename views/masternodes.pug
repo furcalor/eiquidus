@@ -26,18 +26,7 @@ block content
         return ('0' + dy).slice(-2) + " day" + (('0' + dy).slice(-2) == 1 ? "" : "s") + " " + ('0' + h).slice(-2) + "h " + ('0' + m).slice(-2) + "m " + ('0' + s).slice(-2) + "s";
     }
     $(document).ready(function() {
-      var enabled_columns = {
-        rank: false,
-        network: false,
-        status : false,
-        addr: false,
-        version : false,
-        lastseen: false,
-        activetime: false,
-        lastpaid: false,
-        ip_address: false,
-        last_paid_block: false
-      };
+      var useNewDashFormat = true;
       var labels = !{JSON.stringify(settings.labels)};
       var ctable = $('#masternodes-table').dataTable({
         autoWidth: true,
@@ -119,10 +108,7 @@ block content
         },
         columns: [
           { name: 'ip_address', data: 'ip_address', className: "ipAddressCol" },
-          { name: 'rank', data: 'rank', className: "rankCol" },
-          { name: 'network', data: 'network', className: "networkCol" },
           { name: 'addr', data: 'addr', className: "addressCol" },
-          { name: 'version', data: 'version', className: "versionCol" },
           { name: 'lastseen', data: 'lastseen', className: "lastSeenCol" },
           { name: 'lastpaid', data: 'lastpaid', className: "lastPaidCol" },
           { name: 'last_paid_block', data: 'last_paid_block', className: "lastPaidBlockCol" },
@@ -159,18 +145,11 @@ block content
         },
         fnInitComplete: function(settings, json) {
           setTimeout(function () {
-            // Hide/show columns based on whether they have data or not
-            ctable.api().column('rank:name').visible(enabled_columns.rank, false);
-            ctable.api().column('network:name').visible(enabled_columns.network, false);
-            ctable.api().column('version:name').visible(enabled_columns.version, false);
-            ctable.api().column('lastseen:name').visible(enabled_columns.lastseen, false);
-            ctable.api().column('activetime:name').visible(enabled_columns.activetime, false);
-            ctable.api().column('ip_address:name').visible(enabled_columns.ip_address, false);
-            ctable.api().column('last_paid_block:name').visible(enabled_columns.last_paid_block, false);
-            ctable.api().column('status:name').visible(enabled_columns.status, false);
-            ctable.api().column('addr:name').visible(enabled_columns.addr, false);
-            ctable.api().column('lastpaid:name').visible(enabled_columns.lastpaid, false);
-            fixDataTableColumns();
+            // Hide/show columns based on which Dash masternode format is used
+            ctable.api().column('lastseen:name').visible(!useNewDashFormat, false);
+            ctable.api().column('activetime:name').visible(!useNewDashFormat, false);
+            ctable.api().column('ip_address:name').visible(useNewDashFormat, false);
+            ctable.api().column('last_paid_block:name').visible(useNewDashFormat);
           }, 0);
         }
       });
@@ -230,7 +209,6 @@ block content
             th.text-center Pay rank
             th.text-center Network
             th.text-center Wallet address
-            th.text-center Protocol
             th.text-center Last seen
             th.text-center Last paid
             th.text-center Last paid block
