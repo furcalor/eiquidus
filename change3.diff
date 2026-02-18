@@ -1,0 +1,105 @@
+diff --git a/app.js b/app.js
+index 51521aeb..6b2f100c 100644
+--- a/app.js
++++ b/app.js
+@@ -458,7 +458,7 @@ app.use('/ext/getsummary', function(req, res) {
+               lib.get_masternodecount(function(masternodestotal) {
+                 lib.get_difficulty(function(difficulty) {
+                   difficultyHybrid = '';
+-
++  console.log('mn_total:', masternodestotal);
+                   if (difficulty && difficulty['proof-of-work']) {
+                     if (settings.shared_pages.difficulty == 'Hybrid') {
+                       difficultyHybrid = 'POS: ' + difficulty['proof-of-stake'];
+@@ -894,4 +894,4 @@ exec('git rev-parse HEAD', (err, stdout, stderr) => {
+   }
+ });
+ 
+-module.exports = app;
+\ No newline at end of file
++module.exports = app;
+diff --git a/lib/explorer.js b/lib/explorer.js
+index fc50d769..01e41b4e 100644
+--- a/lib/explorer.js
++++ b/lib/explorer.js
+@@ -346,36 +346,46 @@ module.exports = {
+     }
+   },
+ 
+-  get_masternodecount: function(cb) {
+-    var cmd = prepareRpcCommand(settings.api_cmds.getmasternodecount);
+-
+-    if (!(cmd.method == '' && cmd.parameters.length == 0)) {
+-      if (settings.api_cmds.use_rpc) {
+-        rpcCommand([{method:cmd.method, parameters: cmd.parameters}], function(response) {
+-          // check if an error msg was received from the rpc server
+-          if (response == 'There was an error. Check your console.')
+-            return cb(null);
+-          else
+-            return cb(response);
+-        });
+-      } else {
+-        var uri = base_url + 'getmasternodecount';
+-
+-        request({uri: uri, json: true}, function (error, response, body) {
+-          // check if an error msg was received from the web api server
+-          if (body == 'There was an error. Check your console.')
+-            return cb(null);
+-          else
+-            return cb(body);
+-        });
+-      }
++get_masternodecount: function(cb) {
++  var cmd = prepareRpcCommand(settings.api_cmds.getmasternodecount);
++
++  if (!(cmd.method == '' && cmd.parameters.length == 0)) {
++    if (settings.api_cmds.use_rpc) {
++      rpcCommand([{method:cmd.method, parameters: cmd.parameters}], function(response) {
++        // check if an error msg was received from the rpc server
++        if (response == 'There was an error. Check your console.')
++          return cb(null);
++        else {
++  var regex = /Total: (\d+) \(PS Compatible: \d+ \/ Enabled: (\d+)/;
++  var match = response.match(regex);
++  var totalCount = match ? parseInt(match[1]) : 0;
++  var enabledCount = match ? parseInt(match[2]) : 0;
++  response = { total: totalCount, enabled: enabledCount };
++  return cb(response);
++        }
++      });
+     } else {
+-      // cmd not in use. return null.
+-      return cb(null);
++      var uri = base_url + 'getmasternodecount';
++
++      request({uri: uri, json: true}, function (error, response, body) {
++        // check if an error msg was received from the web api server
++        if (body == 'There was an error. Check your console.')
++          return cb(null);
++        else {
++          var totalCount = response.total ? parseInt(response.total) : 0;
++          var enabledCount = response.enabled ? parseInt(response.enabled) : 0;
++          response = { total: totalCount, enabled: enabledCount };
++          return cb(response);
++        }
++      });
+     }
+-  },
++  } else {
++    // cmd not in use. return null.
++    return cb(null);
++  }
++},
+ 
+-  get_blockcount: function(cb) {
++get_blockcount: function(cb) {
+     var cmd = prepareRpcCommand(settings.api_cmds.getblockcount);
+ 
+     if (!(cmd.method == '' && cmd.parameters.length == 0)) {
+@@ -1485,4 +1495,4 @@ module.exports = {
+ 
+     return retVal;
+   }
+-};
+\ No newline at end of file
++};

@@ -1,0 +1,13 @@
+diff --git a/scripts/sync.js b/scripts/sync.js
+index 894515c5..d130c567 100644
+--- a/scripts/sync.js
++++ b/scripts/sync.js
+@@ -1545,7 +1545,7 @@ if (lib.is_locked([database]) == false) {
+           status: values[0].trim(),
+           payee: values[2].trim(),
+           lastpaidtime: parseInt(values[3]),
+-          lastpaidblock: parseInt(values[4]),
++          lastpaidblock: parseInt(values[6]),
+           address: values[7].trim()
+         };
+ 

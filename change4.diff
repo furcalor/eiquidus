@@ -1,0 +1,453 @@
+diff --git a/lib/database.js b/lib/database.js
+index 4fbd4dbe..4f12cb46 100644
+--- a/lib/database.js
++++ b/lib/database.js
+@@ -1290,7 +1290,6 @@ module.exports = {
+   // add or update a single masternode
+   add_update_masternode(masternode, add, cb) {
+     if (masternode.proTxHash == null && masternode.txhash == null) {
+-      console.log('Masternode update error: Tx Hash is missing');
+ 
+       return cb(false);
+     } else {
+@@ -1310,16 +1309,13 @@ module.exports = {
+       } else {
+         // This is the older Dash format, or an unknown format
+         var mn = new Masternode({
+-          rank: masternode.rank,
+-          network: masternode.network,
+-          txhash: masternode.txhash,
+-          outidx: masternode.outidx,
++          txhash: masternode.proTxHash,
+           status: masternode.status,
+-          addr: masternode.addr,
+-          version: masternode.version,
+-          lastseen: masternode.lastseen,
+-          activetime: masternode.activetime,
+-          lastpaid: masternode.lastpaid,
++          addr: masternode.payee,
++          lastpaid: masternode.lastpaidtime,
++          ip_address: masternode.address,
++          last_paid_block: masternode.lastpaidblock,
++          lastseen: Math.floor(Date.now() / 1000),
+           claim_name: (masternode.claim_name == null ? '' : masternode.claim_name)
+         });
+       }
+@@ -1710,4 +1706,4 @@ module.exports = {
+   },
+ 
+   fs: fs
+-};
+\ No newline at end of file
++};
+diff --git a/lib/markets/stex.js b/lib/markets/stex.js
+new file mode 100644
+index 00000000..e58e2f29
+--- /dev/null
++++ b/lib/markets/stex.js
+@@ -0,0 +1,165 @@
++var request = require('postman-request');
++var base_url = 'https://api3.stex.com/public';
++const market_url_template = 'https://app.stex.com/en/trading/pair/{base}/{coin}/1D';
++
++function get_summary(coin, exchange, stex_id, cb) {
++  var summary = {};
++
++  request({ uri: base_url + '/ticker/' + stex_id, json: true}, function (error, response, body) {
++    if (error)
++      return cb(error, null);
++    else if (body.success === true) {
++      summary['bid'] = body.data['bid'];
++      summary['ask'] = body.data['ask'];
++      summary['volume'] = body.data['volumeQuote'];
++      summary['volume_btc'] = body.data['volume'];
++      summary['high'] = body.data['high'];
++      summary['low'] = body.data['low'];
++      summary['last'] = body.data['last'];
++      summary['change'] = body.data['change'];
++
++      return cb(null, summary);
++    } else
++      return cb(error, null);
++  }).on('error', function(err) {
++    return cb(error, null);
++  });
++}
++
++function get_trades(coin, exchange, stex_id, cb) {
++  var req_url = base_url + '/trades/' + stex_id + '?sort=DESC&limit=100';
++
++  request({ uri: req_url, json: true}, function (error, response, body) {
++    if (body.success == true) {
++      var trades = [];
++
++      for (var i = 0; i < body.data.length; i++) {
++        var trade = {
++          ordertype: body.data[i].type,
++          price: body.data[i].price,
++          quantity: body.data[i].amount,
++          timestamp: body.data[i].timestamp
++        };
++
++        trades.push(trade);
++      }
++
++      return cb(null, trades);
++    } else
++      return cb(body.message, null);
++  }).on('error', function(err) {
++    return cb(error, null);
++  });
++}
++
++function get_orders(coin, exchange, stex_id, cb) {
++  var req_url = base_url + '/orderbook/' + stex_id + '?limit_bids=100&limit_asks=100';
++
++  request({ uri: req_url, json: true}, function (error, response, body) {
++    if (body.success == true) {
++      var orders = body.data;
++      var buys = [];
++      var sells = [];
++
++      if (orders['bid'].length > 0) {
++        for (var i = 0; i < orders['bid'].length; i++) {
++          var order = {
++            price: orders.bid[i].price,
++            quantity: orders.bid[i].amount
++          };
++
++          buys.push(order);
++        }
++      }
++
++      if (orders['ask'].length > 0) {
++        for (var i = 0; i < orders['ask'].length; i++) {
++          var order = {
++            price: orders.ask[i].price,
++            quantity: orders.ask[i].amount
++          };
++
++          sells.push(order);
++        }
++      }
++
++      return cb(null, buys, sells);
++    } else
++      return cb(body.message, [], []);
++  }).on('error', function(err) {
++    return cb(error, null, null);
++  });
++}
++
++function get_chartdata(coin, exchange, stex_id, cb) {
++  var end = Date.now();
++
++  end = end / 1000;
++  start = end - 86400;
++  
++  var req_url = base_url + '/chart/' + stex_id + '/30?timeStart=' + start + '&timeEnd=' + end + '&limit=1800&candlesType=1D';
++
++  request({ uri: req_url, json: true}, function (error, response, chartdata) {
++    if (error)
++      return cb(error, []);
++    else {
++      if (chartdata.success == true) {
++        var processed = [];
++
++        for (var i = 0; i < chartdata.data.length; i++)
++          processed.push([chartdata.data[i].time, parseFloat(chartdata.data[i].open), parseFloat(chartdata.data[i].high), parseFloat(chartdata.data[i].low), parseFloat(chartdata.data[i].close)]);
++
++        return cb(null, processed);
++      } else
++        return cb(chartdata.message, []);
++    }
++  });
++}
++
++function get_pair_id(coin, exchange, cb) {
++  // Lookup the currency pair id needed to use the stex api
++  request({ uri: base_url + '/currency_pairs/list/' + exchange, json: true}, function (error, response, body) {
++    if (error)
++      return cb(error, null);
++    else if (body.success === true) {
++      var stex_id = 0;
++      // Find the currency pair
++      for (i = 0; i < body.data.length; i++) {
++        if (body.data[i].currency_code.toUpperCase() == coin.toUpperCase()) {
++          stex_id = body.data[i].id;
++          break;
++        }
++      }
++
++      return cb(null, stex_id);
++    } else
++      return cb(error, null);
++  }).on('error', function(err) {
++    return cb(error, null);
++  });
++}
++
++module.exports = {
++  market_name: 'Stex',
++  market_logo: 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAACXBIWXMAAAsTAAALEwEAmpwYAAAFyGlUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPD94cGFja2V0IGJlZ2luPSLvu78iIGlkPSJXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQiPz4gPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iQWRvYmUgWE1QIENvcmUgNi4wLWMwMDIgNzkuMTY0NDYwLCAyMDIwLzA1LzEyLTE2OjA0OjE3ICAgICAgICAiPiA8cmRmOlJERiB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRmLXN5bnRheC1ucyMiPiA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIiB4bWxuczp4bXA9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8iIHhtbG5zOnhtcE1NPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvbW0vIiB4bWxuczpzdEV2dD0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL3NUeXBlL1Jlc291cmNlRXZlbnQjIiB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iIHhtbG5zOnBob3Rvc2hvcD0iaHR0cDovL25zLmFkb2JlLmNvbS9waG90b3Nob3AvMS4wLyIgeG1wOkNyZWF0b3JUb29sPSJBZG9iZSBQaG90b3Nob3AgMjEuMiAoV2luZG93cykiIHhtcDpDcmVhdGVEYXRlPSIyMDIwLTEyLTI1VDE5OjQwOjAyLTA3OjAwIiB4bXA6TWV0YWRhdGFEYXRlPSIyMDIwLTEyLTI1VDE5OjQwOjAyLTA3OjAwIiB4bXA6TW9kaWZ5RGF0ZT0iMjAyMC0xMi0yNVQxOTo0MDowMi0wNzowMCIgeG1wTU06SW5zdGFuY2VJRD0ieG1wLmlpZDpmNDY0MzUwOS1lMDg4LTZlNDUtYTRjNS1hNDQyMmFlOTJhMjEiIHhtcE1NOkRvY3VtZW50SUQ9ImFkb2JlOmRvY2lkOnBob3Rvc2hvcDoyNTQzNzIxNy05NDM4LTc2NDYtYThjZS05OWMxMjAwMGViMDQiIHhtcE1NOk9yaWdpbmFsRG9jdW1lbnRJRD0ieG1wLmRpZDoxYWY2Y2I0Zi05ZTJlLTJlNGYtOGEzMC0yYTE2OTQ3Njc5YmYiIGRjOmZvcm1hdD0iaW1hZ2UvcG5nIiBwaG90b3Nob3A6Q29sb3JNb2RlPSIzIj4gPHhtcE1NOkhpc3Rvcnk+IDxyZGY6U2VxPiA8cmRmOmxpIHN0RXZ0OmFjdGlvbj0iY3JlYXRlZCIgc3RFdnQ6aW5zdGFuY2VJRD0ieG1wLmlpZDoxYWY2Y2I0Zi05ZTJlLTJlNGYtOGEzMC0yYTE2OTQ3Njc5YmYiIHN0RXZ0OndoZW49IjIwMjAtMTItMjVUMTk6NDA6MDItMDc6MDAiIHN0RXZ0OnNvZnR3YXJlQWdlbnQ9IkFkb2JlIFBob3Rvc2hvcCAyMS4yIChXaW5kb3dzKSIvPiA8cmRmOmxpIHN0RXZ0OmFjdGlvbj0ic2F2ZWQiIHN0RXZ0Omluc3RhbmNlSUQ9InhtcC5paWQ6ZjQ2NDM1MDktZTA4OC02ZTQ1LWE0YzUtYTQ0MjJhZTkyYTIxIiBzdEV2dDp3aGVuPSIyMDIwLTEyLTI1VDE5OjQwOjAyLTA3OjAwIiBzdEV2dDpzb2Z0d2FyZUFnZW50PSJBZG9iZSBQaG90b3Nob3AgMjEuMiAoV2luZG93cykiIHN0RXZ0OmNoYW5nZWQ9Ii8iLz4gPC9yZGY6U2VxPiA8L3htcE1NOkhpc3Rvcnk+IDwvcmRmOkRlc2NyaXB0aW9uPiA8L3JkZjpSREY+IDwveDp4bXBtZXRhPiA8P3hwYWNrZXQgZW5kPSJyIj8+1hd2ZgAAAIlJREFUKBVjYBgFRIBv377tAANpaekVK1Z8+PDhxIkTBgYGGzZsOHPmzIEDB4BsPz+/S5cuzZ49e8aMGQzPnz8Hyn38+JGPjw+oH6hCQUEByAAKbtq0acGCBSIiIkDu+vXr3717x83NzbALDH79+iUgIICmAW5DSEjIlStXZs2aNW/evNE4oQkAAC8ZS4smAdEcAAAAAElFTkSuQmCC',
++  market_url_template: market_url_template,
++  market_url_case: 'u',
++  get_data: function(settings, cb) {
++    var error = null;
++    get_pair_id(settings.coin.toUpperCase(), settings.exchange.toUpperCase(), function (err, stex_id) {
++      get_chartdata(settings.coin.toUpperCase(), settings.exchange.toUpperCase(), stex_id, function (err, chartdata) {
++        if (err) { chartdata = []; error = err; }
++        get_orders(settings.coin.toUpperCase(), settings.exchange.toUpperCase(), stex_id, function (err, buys, sells) {
++          if (err) { error = err; }
++          get_trades(settings.coin.toUpperCase(), settings.exchange.toUpperCase(), stex_id, function (err, trades) {
++            if (err) { error = err; }
++            get_summary(settings.coin.toUpperCase(), settings.exchange.toUpperCase(), stex_id, function (err, stats) {
++              if (err) { error = err; }
++              return cb(error, { buys: buys, sells: sells, chartdata: chartdata, trades: trades, stats: stats });
++            });
++          });
++        });
++      });
++    });
++  }
++};
+\ No newline at end of file
+diff --git a/models/masternode.js b/models/masternode.js
+index 7a33253d..1ceeeafd 100644
+--- a/models/masternode.js
++++ b/models/masternode.js
+@@ -17,4 +17,5 @@ var MasternodeSchema = new Schema({
+   last_paid_block: {type: Number, default: 0}
+ }, {id: false});
+ 
+-module.exports = mongoose.model('Masternode', MasternodeSchema);
+\ No newline at end of file
++module.exports = mongoose.model('Masternode', MasternodeSchema);
++
+diff --git a/public/css/custom.min.css b/public/css/custom.min.css
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/public/favicon-128.png b/public/favicon-128.png
+index cb99157a..880197a1 100644
+Binary files a/public/favicon-128.png and b/public/favicon-128.png differ
+diff --git a/public/favicon-180.png b/public/favicon-180.png
+index 867a50fb..60945734 100644
+Binary files a/public/favicon-180.png and b/public/favicon-180.png differ
+diff --git a/public/favicon-192.png b/public/favicon-192.png
+index a80e0428..60945734 100644
+Binary files a/public/favicon-192.png and b/public/favicon-192.png differ
+diff --git a/public/favicon-32.png b/public/favicon-32.png
+index 7c962d5d..cd08010c 100644
+Binary files a/public/favicon-32.png and b/public/favicon-32.png differ
+diff --git a/public/img/external.png b/public/img/external.png
+index 4774edd4..c7e3b38d 100644
+Binary files a/public/img/external.png and b/public/img/external.png differ
+diff --git a/public/img/header-logo.png b/public/img/header-logo.png
+index 34784bd1..c7e3b38d 100644
+Binary files a/public/img/header-logo.png and b/public/img/header-logo.png differ
+diff --git a/public/img/logo.png b/public/img/logo.png
+index 83f09858..17526d3c 100644
+Binary files a/public/img/logo.png and b/public/img/logo.png differ
+diff --git a/public/img/m4plogo.webp b/public/img/m4plogo.webp
+new file mode 100644
+index 00000000..2713bb37
+Binary files /dev/null and b/public/img/m4plogo.webp differ
+diff --git a/public/img/page-title-img.png b/public/img/page-title-img.png
+index 55cc0060..c7e3b38d 100644
+Binary files a/public/img/page-title-img.png and b/public/img/page-title-img.png differ
+diff --git a/public/img/pepew.png b/public/img/pepew.png
+new file mode 100644
+index 00000000..c7e3b38d
+Binary files /dev/null and b/public/img/pepew.png differ
+diff --git a/scripts/sync.js b/scripts/sync.js
+index f29a190f..894515c5 100644
+--- a/scripts/sync.js
++++ b/scripts/sync.js
+@@ -1455,7 +1455,7 @@ if (lib.is_locked([database]) == false) {
+                       country: peer.country,
+                       country_code: peer.country_code
+                     }, function() {
+-                      console.log('Updated peer %s%s [%s/%s]', address, (port == null || port == '' ? '' : ':' + port.toString()), (i + 1).toString(), body.length.toString());
++                      console.log('Updated peer %s:%s [%s/%s]', address, port.toString(), (i + 1).toString(), body.length.toString());
+ 
+                       // check if the script is stopping
+                       if (stopSync) {
+@@ -1489,7 +1489,7 @@ if (lib.is_locked([database]) == false) {
+                           country: geo.country_name,
+                           country_code: geo.country_code
+                         }, function() {
+-                          console.log('Added new peer %s%s [%s/%s]', address, (port == null || port == '' ? '' : ':' + port.toString()), (i + 1).toString(), body.length.toString());
++                          console.log('Added new peer %s:%s [%s/%s]', address, port.toString(), (i + 1).toString(), body.length.toString());
+ 
+                           // check if the script is stopping
+                           if (stopSync) {
+@@ -1522,55 +1522,66 @@ if (lib.is_locked([database]) == false) {
+             exit(2);
+           }
+         });
+-      } else if (database == 'masternodes') {
+-        lib.get_masternodelist(function(body) {
+-          if (body != null) {
+-            var isObject = false;
+-            var objectKeys = null;
+-
+-            // Check if the masternode data is an array or an object
+-            if (body.length == null) {
+-              // Process data as an object
+-              objectKeys = Object.keys(body);
+-              isObject = true;
+-            }
+-
+-            lib.syncLoop((isObject ? objectKeys : body).length, function(loop) {
+-              var i = loop.iteration();
++} else if (database == 'masternodes') {
++  lib.get_masternodelist(function(body) {
++    if (body != null) {
++      var isObject = false;
++      var objectKeys = null;
++      // Check if the masternode data is an array or an object
++      if (body.length == null) {
++        // Process data as an object
++        objectKeys = Object.keys(body);
++        isObject = true;
++      }
+ 
+-              db.save_masternode((isObject ? body[objectKeys[i]] : body[i]), function(success) {
+-                if (success) {
+-                  // check if the script is stopping
+-                  if (stopSync) {
+-                    // stop the loop
+-                    loop.break(true);
+-                  }
++      lib.syncLoop((isObject ? objectKeys : body).length, function(loop) {
++        var i = loop.iteration();
++        // Parse masternode data
++        const value = isObject ? body[objectKeys[i]] : body[i];
++        const values = value.trim().split(/\s+/);
++        const proTxHash = objectKeys[i].split("-")[0]; // Extract the proTxHash from the object key
++        const masternode = {
++          proTxHash: proTxHash,
++          status: values[0].trim(),
++          payee: values[2].trim(),
++          lastpaidtime: parseInt(values[3]),
++          lastpaidblock: parseInt(values[4]),
++          address: values[7].trim()
++        };
++
++        db.save_masternode(masternode, function(success) {
++          if (success) {
++            // check if the script is stopping
++            if (stopSync) {
++              // stop the loop
++              loop.break(true);
++            }
+ 
+-                  loop.next();
+-                } else {
+-                  console.log('Error: Cannot save masternode %s.', (isObject ? (body[objectKeys[i]].payee ? body[objectKeys[i]].payee : 'UNKNOWN') : (body[i].addr ? body[i].addr : 'UNKNOWN')));
+-                  exit(1);
+-                }
+-              });
+-            }, function() {
+-              db.remove_old_masternodes(function(cb) {
+-                db.update_last_updated_stats(settings.coin.name, { masternodes_last_updated: Math.floor(new Date() / 1000) }, function(cb) {
+-                  // check if the script stopped prematurely
+-                  if (stopSync) {
+-                    console.log('Masternode sync was stopped prematurely');
+-                    exit(1);
+-                  } else {
+-                    console.log('Masternode sync complete');
+-                    exit(0);
+-                  }
+-                });
+-              });
+-            });
++            loop.next();
+           } else {
+-            console.log('No masternodes found');
+-            exit(2);
++            console.log('Error: Cannot save masternode %s.', masternode.protxhash);
++            exit(1);
+           }
+         });
++      }, function() {
++        db.remove_old_masternodes(function(cb) {
++          db.update_last_updated_stats(settings.coin.name, { masternodes_last_updated: Math.floor(new Date() / 1000) }, function(cb) {
++            // check if the script stopped prematurely
++            if (stopSync) {
++              console.log('Masternode sync was stopped prematurely');
++              exit(1);
++            } else {
++              console.log('Masternode sync complete');
++              exit(0);
++            }
++          });
++        });
++      });
++    } else {
++      console.log('No masternodes found');
++      exit(2);
++    }
++  });
+       } else {
+         // check if market feature is enabled
+         if (settings.markets_page.enabled == true) {
+@@ -1679,4 +1690,4 @@ if (lib.is_locked([database]) == false) {
+   // sync process is already running
+   console.log("Sync aborted");
+   exit(2);
+-}
+\ No newline at end of file
++}
+diff --git a/views/masternodes.pug b/views/masternodes.pug
+index 351ecbb1..213d4f2d 100644
+--- a/views/masternodes.pug
++++ b/views/masternodes.pug
+@@ -27,7 +27,7 @@ block content
+         return ('0' + dy).slice(-2) + " day" + (('0' + dy).slice(-2) == 1 ? "" : "s") + " " + ('0' + h).slice(-2) + "h " + ('0' + m).slice(-2) + "m " + ('0' + s).slice(-2) + "s";
+     }
+     $(document).ready(function() {
+-      var useNewDashFormat = false;
++      var useNewDashFormat = true;
+       var labels = !{JSON.stringify(settings.labels)};
+       var ctable = $('#masternodes-table').dataTable({
+         autoWidth: true,
+@@ -78,11 +78,8 @@ block content
+           }
+         },
+         columns: [
+-          { name: 'rank', data: 'rank', className: "rankCol" },
+-          { name: 'network', data: 'network', className: "networkCol" },
+           { name: 'ip_address', data: 'ip_address', className: "ipAddressCol" },
+           { name: 'addr', data: 'addr', className: "addressCol" },
+-          { name: 'version', data: 'version', className: "versionCol" },
+           { name: 'lastseen', data: 'lastseen', className: "lastSeenCol" },
+           { name: 'lastpaid', data: 'lastpaid', className: "lastPaidCol" },
+           { name: 'last_paid_block', data: 'last_paid_block', className: "lastPaidBlockCol" },
+@@ -118,9 +115,6 @@ block content
+         fnInitComplete: function(settings, json) {
+           setTimeout(function () {
+             // Hide/show columns based on which Dash masternode format is used
+-            ctable.api().column('rank:name').visible(!useNewDashFormat, false);
+-            ctable.api().column('network:name').visible(!useNewDashFormat, false);
+-            ctable.api().column('version:name').visible(!useNewDashFormat, false);
+             ctable.api().column('lastseen:name').visible(!useNewDashFormat, false);
+             ctable.api().column('activetime:name').visible(!useNewDashFormat, false);
+             ctable.api().column('ip_address:name').visible(useNewDashFormat, false);
+@@ -180,14 +174,11 @@ block content
+           - theadClasses.push('table-' + settings.shared_pages.table_header_bgcolor);
+         thead
+           tr(class=theadClasses)
+-            th.text-center Pay rank
+-            th.text-center Protocol
+             th.text-center IP address
+             th.text-center Wallet address
+-            th.text-center Protocol
+             th.text-center Last seen
+             th.text-center Last paid
+             th.text-center Last paid block
+             th.text-center Active since
+             th.text-center Status
+-        tbody.text-center
+\ No newline at end of file
++        tbody.text-center

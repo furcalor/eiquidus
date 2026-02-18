@@ -1,0 +1,35 @@
+diff --git a/app.js b/app.js
+index 6b2f100c..a4b1f176 100644
+--- a/app.js
++++ b/app.js
+@@ -458,7 +458,6 @@ app.use('/ext/getsummary', function(req, res) {
+               lib.get_masternodecount(function(masternodestotal) {
+                 lib.get_difficulty(function(difficulty) {
+                   difficultyHybrid = '';
+-  console.log('mn_total:', masternodestotal);
+                   if (difficulty && difficulty['proof-of-work']) {
+                     if (settings.shared_pages.difficulty == 'Hybrid') {
+                       difficultyHybrid = 'POS: ' + difficulty['proof-of-stake'];
+diff --git a/lib/explorer.js b/lib/explorer.js
+index 01e41b4e..590400b2 100644
+--- a/lib/explorer.js
++++ b/lib/explorer.js
+@@ -356,12 +356,12 @@ get_masternodecount: function(cb) {
+         if (response == 'There was an error. Check your console.')
+           return cb(null);
+         else {
+-  var regex = /Total: (\d+) \(PS Compatible: \d+ \/ Enabled: (\d+)/;
+-  var match = response.match(regex);
+-  var totalCount = match ? parseInt(match[1]) : 0;
+-  var enabledCount = match ? parseInt(match[2]) : 0;
+-  response = { total: totalCount, enabled: enabledCount };
+-  return cb(response);
++          var regex = /Total: (\d+) \(PS Compatible: \d+ \/ Enabled: (\d+)/;
++          var match = response.match(regex);
++          var totalCount = match ? parseInt(match[1]) : 0;
++          var enabledCount = match ? parseInt(match[2]) : 0;
++          response = { total: totalCount, enabled: enabledCount };
++          return cb(response);
+         }
+       });
+     } else {
