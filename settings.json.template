@@ -802,6 +802,9 @@
     // connections_table: a collection of settings that pertain to the connections table on the network page
     //                    Table data is populated via the /ext/getnetworkpeers api
     "connections_table": {
+      // enabled: Enable/disable the connections table (true/false)
+      //          If set to false, the connections table will be completely inaccessible
+      "enabled": true,
       // page_length_options: An array of page length options that determine how many items/records to display in the table at any given time
       "page_length_options": [ 10, 25, 50, 75, 100 ],
       // items_per_page: The default amount of items/records to display in the table at any given time
@@ -818,6 +821,9 @@
     // addnodes_table: a collection of settings that pertain to the add nodes table on the network page
     //                 Table data is populated via the /ext/getnetworkpeers api
     "addnodes_table": {
+      // enabled: Enable/disable the add nodes table (true/false)
+      //          If set to false, the add nodes table will be completely inaccessible
+      "enabled": true,
       // page_length_options: An array of page length options that determine how many items/records to display in the table at any given time
       "page_length_options": [ 10, 25, 50, 75, 100 ],
       // items_per_page: The default amount of items/records to display in the table at any given time
@@ -834,6 +840,9 @@
     // onetry_table: a collection of settings that pertain to the one try table on the network page
     //               Table data is populated via the /ext/getnetworkpeers api
     "onetry_table": {
+      // enabled: Enable/disable the one try table (true/false)
+      //          If set to false, the one try table will be completely inaccessible
+      "enabled": true,
       // page_length_options: An array of page length options that determine how many items/records to display in the table at any given time
       "page_length_options": [ 10, 25, 50, 75, 100 ],
       // items_per_page: The default amount of items/records to display in the table at any given time
@@ -884,6 +893,8 @@
       // show_distribution_chart: Show/hide the wealth distribution pie chart with the breakdown of coins owned by the top 1-25, 26-50, 51-75, 76-100, 101+ wallets and all burned coins (true/false)
       //                          If set to false, the wealth distribution pie chart will be completely hidden
       "show_distribution_chart": true,
+      // show_address_count: Show/hide the address count in the wealth distribution section (true/false)
+      "show_address_count": false,
       // colors: An array of html color codes to represent the top 100 groupings in the wealth distribution table and pie chart
       //         From left-to-right the 6 colors are represented as the following: "top 1-25", "top 26-50", "top 51-75", "top 76-100", "101+" and "burned coins" - which is used if the include_burned_coins_in_distribution setting is enabled
       "colors": [ "#e73cbd", "#00bc8c", "#3498db", "#e3ce3e", "#adb5bd", "#e74c3c" ]
@@ -1065,6 +1076,39 @@
         //                All entries must specify your coins symbol as it is displayed on the exchange, followed by a slash (/) and ending with the symbol of the market or asset that is being traded against
         //                Ex: "LTC/BTC", "LTC/USDT", "LTC/ETH"
         "trading_pairs": [ "LTC/BTC" ]
+      },
+      // dexomy: a collection of settings that pertain to the dexomy exchange
+      "dexomy": {
+        // enabled: Enable/disable the dexomy exchange (true/false)
+        //          If set to false, the dexomy page will be completely inaccessible and no market data will be downloaded for this exchange
+        "enabled": false,
+        // trading_pairs: An array of market trading pair symbols
+        //                You can add as many trading pairs as necessary
+        //                All entries must specify your coins symbol as it is displayed on the exchange, followed by a slash (/) and ending with the symbol of the market or asset that is being traded against
+        //                Ex: "LTC/BTC", "LTC/USDT", "LTC/ETH"
+        "trading_pairs": [ "LTC/BTC" ]
+      },
+      // nonkyc: a collection of settings that pertain to the nonkyc exchange
+      "nonkyc": {
+        // enabled: Enable/disable the nonkyc exchange (true/false)
+        //          If set to false, the nonkyc page will be completely inaccessible and no market data will be downloaded for this exchange
+        "enabled": false,
+        // trading_pairs: An array of market trading pair symbols
+        //                You can add as many trading pairs as necessary
+        //                All entries must specify your coins symbol as it is displayed on the exchange, followed by a slash (/) and ending with the symbol of the market or asset that is being traded against
+        //                Ex: "LTC/BTC", "LTC/USDT", "LTC/ETH"
+        "trading_pairs": [ "LTC/BTC" ]
+      },
+      // xeggex: a collection of settings that pertain to the xeggex exchange
+      "xeggex": {
+        // enabled: Enable/disable the xeggex exchange (true/false)
+        //          If set to false, the xeggex page will be completely inaccessible and no market data will be downloaded for this exchange
+        "enabled": false,
+        // trading_pairs: An array of market trading pair symbols
+        //                You can add as many trading pairs as necessary
+        //                All entries must specify your coins symbol as it is displayed on the exchange, followed by a slash (/) and ending with the symbol of the market or asset that is being traded against
+        //                Ex: "LTC/BTC", "LTC/USDT", "LTC/ETH"
+        "trading_pairs": [ "LTC/BTC" ]
       }
     },
     // default_exchange: a collection of settings that pertain to the default exchange
@@ -1077,7 +1121,13 @@
       "exchange_name": "freiexchange",
       // trading_pair: The name of the trading pair for the default exchange must exactly match the name of a trading pair from the "exchanges" setting above
       "trading_pair": "LTC/BTC"
-    }
+    },
+    // market_price: Determine the source for market price. Valid options: exchange, coingecko
+    "market_price": "exchange",
+    // coingecko_currency: The currency to use when getting market price from CoinGecko (e.g., usd, btc, eth)
+    "coingecko_currency": "usd",
+    // coingecko_api_key: Your CoinGecko API key (required for CoinGecko Pro API)
+    "coingecko_api_key": ""
   },
 
   // api_page: a collection of settings that pertain to the api page
@@ -1258,7 +1308,9 @@
           //          If set to false, the /ext/getlasttxs api will be completely disabled for public use (no definition on the api page and a disabled error msg if you try to call the endpoint directly) but the api will still be available internally to the explorer
           "enabled": true,
           // max_items_per_query: The maximum # of transactions that can be returned from the /ext/getlasttxs api endpoint in a single call
-          "max_items_per_query": 100
+          "max_items_per_query": 100,
+          // show_extracted_by: Determine whether to include the miner/pool that extracted/mined each block in the API response (true/false)
+          "show_extracted_by": false
         },
         // getcurrentprice: a collection of settings that pertain to the /ext/getcurrentprice api endpoint
         //                  Returns last known exchange price
@@ -1347,7 +1399,10 @@
     "show_header_menu": true,
     // enable_bad_word_filter: Enable/disable the "bad word" filter for claimed addresses, so that trying to claim an address with a bad word like "ash0le" will fail
     //                         This feature uses the default blacklist from the "bad-words" plugin from here: https://www.npmjs.com/package/bad-words
-    "enable_bad_word_filter": true
+    "enable_bad_word_filter": true,
+    // enable_captcha: Enable/disable captcha verification on the claim address page (true/false)
+    //                 NOTE: Requires the "captcha" settings to be configured
+    "enable_captcha": false
   },
 
   // orphans_page: a collection of settings that pertain to the orphans page
@@ -1396,6 +1451,14 @@
     "save_stats_after_sync_blocks": 100,
     // show_sync_msg_when_syncing_more_than_blocks: Show the sync msg at the top of all pages during index syncronization if there are more than this many blocks to process
     "show_sync_msg_when_syncing_more_than_blocks": 1000,
+    // batch_size: The number of blocks to process in a single batch during sync
+    "batch_size": 100,
+    // elastic_stack_size: The maximum size of the elastic stack used during sync
+    "elastic_stack_size": 1000,
+    // wait_for_bulk_database_save: Determine whether to wait for bulk database saves to complete before continuing (true/false)
+    "wait_for_bulk_database_save": false,
+    // rate_limit: The rate limit for sync operations in milliseconds (0 = no limit)
+    "rate_limit": 0,
     // supply: Determine how to calculate current coin supply
     //         NOTE: The supply is always retrieved right before doing a normal index sync, reindex or check
     //         Valid options:
@@ -1638,5 +1701,49 @@
       //          NOTE: Enabling this feature will require a full reindex of the blockchain data
       "enabled": false
     }
+  },
+
+  // captcha: a collection of settings that pertain to captcha verification
+  "captcha": {
+    // provider: The captcha provider to use. Valid options: recaptcha, hcaptcha
+    "provider": "recaptcha",
+    // site_key: Your captcha site key
+    "site_key": "",
+    // secret_key: Your captcha secret key
+    "secret_key": ""
+  },
+
+  // default_coingecko_ids: Default CoinGecko IDs for common cryptocurrencies used for USD price lookups
+  "default_coingecko_ids": {
+    // BTC: Bitcoin CoinGecko ID
+    "BTC": "bitcoin",
+    // ETH: Ethereum CoinGecko ID
+    "ETH": "ethereum",
+    // LTC: Litecoin CoinGecko ID
+    "LTC": "litecoin",
+    // DOGE: Dogecoin CoinGecko ID
+    "DOGE": "dogecoin",
+    // USDT: Tether CoinGecko ID
+    "USDT": "tether"
+  },
+
+  // plugins: a collection of settings that pertain to the plugin system
+  "plugins": {
+    // enabled: Enable/disable the plugin system (true/false)
+    "enabled": false,
+    // plugins_directory: The directory where plugins are stored
+    "plugins_directory": "./plugins"
+  },
+
+  // benchmark: a collection of settings that pertain to benchmarking
+  "benchmark": {
+    // enabled: Enable/disable benchmarking (true/false)
+    "enabled": false,
+    // log_to_console: Determine whether to log benchmark results to console (true/false)
+    "log_to_console": false,
+    // log_to_file: Determine whether to log benchmark results to file (true/false)
+    "log_to_file": false,
+    // file_path: The path to the benchmark log file
+    "file_path": "./tmp/benchmark.log"
   }
 }
