@@ -1694,8 +1694,10 @@
     // getvotelist: Returns an object with details regarding the current vote list
     "getvotelist": "masternodelist votes",
     // getmasternodecount: Returns a json object containing the total number of masternodes on the network
+    //                     For Pepe/protx-style masternodes, use: "masternode count all"
     "getmasternodecount": "getmasternodecount",
     // getmasternodelist: Returns a json array containing status information for all masternodes on the network
+    //                    For Pepe/protx-style masternodes, use: "masternodelist"
     "getmasternodelist": "listmasternodes",
     // verifymessage: Verify a signed message. Must accept the following arguments:
     //                address: The wallet address to use for the signature
